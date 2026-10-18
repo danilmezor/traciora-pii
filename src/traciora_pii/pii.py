@@ -11,8 +11,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .config import PIIConfig
-from dataclasses import dataclass
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 
 from ._latency import time_detector
 
@@ -101,7 +101,7 @@ def _compile_policies(specs: tuple[str, ...]) -> tuple[PIIDetector, ...]:
     return tuple(compile_multi_regex_policy(specs))
 
 
-def configured_detectors(config: "PIIConfig") -> tuple[PIIDetector, ...]:
+def configured_detectors(config: PIIConfig) -> tuple[PIIDetector, ...]:
     return _compile_policies(tuple(config.detector.regex_policies or
                                    [config.detector.regex_policy or "ru"]))
 
@@ -109,7 +109,7 @@ def configured_detectors(config: "PIIConfig") -> tuple[PIIDetector, ...]:
 def detect_pii(
     text: str, detectors: Iterable[PIIDetector] | None = None, *,
     excluded_categories: Iterable[str] | None = None,
-    config: "PIIConfig | None" = None,
+    config: PIIConfig | None = None,
 ) -> list[PIIFinding]:
     if not text:
         return []
@@ -149,7 +149,7 @@ def detect_pii(
 def redact_pii_text(
     text: str, detectors: Iterable[PIIDetector] | None = None, *,
     excluded_categories: Iterable[str] | None = None,
-    config: "PIIConfig | None" = None,
+    config: PIIConfig | None = None,
 ) -> tuple[str, list[PIIFinding]]:
     if not text:
         return text, []
@@ -188,7 +188,7 @@ def redact_pii_text(
 _LONG_NUMBER = PIIDetector("long_number", re.compile(r"(?<![\w-])\d{10,}(?!\w)"), "[NUMBER]")
 
 
-def scrub(text: str, *, config: "PIIConfig | None" = None) -> str:
+def scrub(text: str, *, config: PIIConfig | None = None) -> str:
     """Regex-only logging policy, independent of conversational exclusions."""
     if not text:
         return text

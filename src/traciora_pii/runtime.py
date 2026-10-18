@@ -4,8 +4,8 @@ from __future__ import annotations
 import atexit
 import json
 import logging
-from pathlib import Path
 import threading
+from pathlib import Path
 
 from .config import PIIConfig
 from .policies.loader import load_opf_policy
@@ -111,7 +111,7 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
                                       prefilter_enabled=cfg.prefilter,
                                       label_map=load_opf_policy(entry.policy).label_map)
             _shared = SharedOPFDetector(detector)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - optional backend fallback
             logger.warning("OPF unavailable; using regex-only masking. Prepare the selected "
                            "model before startup. error_type=%s", type(exc).__name__)
         return _shared

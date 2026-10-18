@@ -3,15 +3,15 @@ and rehydrate them back to real values.
 """
 from __future__ import annotations
 
+import logging
 import re
-from collections.abc import Callable, Iterable
 import unicodedata
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
 from .pii import PIIFinding, detect_pii
-from .pii_vault import PARTIAL_REF_TOKEN_PATTERN, PIIVaultStore, REF_TOKEN_PATTERN
-import logging
+from .pii_vault import PARTIAL_REF_TOKEN_PATTERN, REF_TOKEN_PATTERN, PIIVaultStore
 
 if TYPE_CHECKING:
     from .config import PIIConfig
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # Zero-width and invisible-formatting characters that attackers use to split
 # PII across digit boundaries (e.g. `+49 30 1<U+200B>23 4567`) so the regex
 # layer fails to match. Stripped before any other processing.
-_ZERO_WIDTH_RE = re.compile("[​‌‍⁠﻿]")
+_ZERO_WIDTH_RE = re.compile("[\u200b‌‍⁠﻿]")
 
 
 def _normalize_input(text: str) -> str:
@@ -60,7 +60,7 @@ class PIIVirtualizer:
         *,
         second_pass_detector: _SecondPassDetector | None = None,
         excluded_categories: Iterable[str] | None = None,
-        config: "PIIConfig | None" = None,
+        config: PIIConfig | None = None,
         map_text: Callable[[Any, Callable[[str], str]], Any] | None = None,
     ):
         from ._masking_policy import resolve_exclusions
@@ -216,7 +216,7 @@ class PIIVirtualizer:
 
 
 def build_second_pass_detector(
-    config: "PIIConfig",
+    config: PIIConfig,
     *,
     opf_model_name: str | None = None,
 ) -> _SecondPassDetector | None:

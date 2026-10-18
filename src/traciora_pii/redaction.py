@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .pii import PIIFinding, redact_pii_text
-import logging
 
 if TYPE_CHECKING:
     from .config import PIIConfig
@@ -24,7 +24,7 @@ class PIIRedactor:
     """Regex-only destructive redaction for applications and benchmarks."""
 
     def __init__(self, *, enabled: bool = True, excluded_categories: Iterable[str] | None = None,
-                 config: "PIIConfig | None" = None):
+                 config: PIIConfig | None = None):
         from ._masking_policy import resolve_exclusions
         self._config = config
         self._excluded_categories = resolve_exclusions(
@@ -34,13 +34,13 @@ class PIIRedactor:
         self.enabled = enabled
 
     @classmethod
-    def from_env(cls) -> "PIIRedactor":
+    def from_env(cls) -> PIIRedactor:
         """Legacy constructor — reads PII_MASKING_ENABLED directly."""
         enabled = os.getenv("PII_MASKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
         return cls(enabled=enabled)
 
     @classmethod
-    def from_config(cls, config: "PIIConfig") -> "PIIRedactor":
+    def from_config(cls, config: PIIConfig) -> PIIRedactor:
         """Build from a :class:`PIIConfig`.
 
         ``config.detector.masking_enabled`` flips the redactor on/off.

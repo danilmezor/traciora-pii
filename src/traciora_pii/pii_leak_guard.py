@@ -7,15 +7,16 @@ preventing the call from proceeding.
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING, Any
 from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .config import PIIConfig
 
+import logging
+
 from .pii import detect_pii
 from .pii_vault import PIIVaultStore
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def assert_model_safe(
     session_scope_key: str,
     vault: PIIVaultStore,
     *,
-    config: "PIIConfig | None" = None,
+    config: PIIConfig | None = None,
     skip_block: Callable[[Any], bool] | None = None,
 ) -> None:
     """Check that *payload* contains no raw PII that has a vault token.
