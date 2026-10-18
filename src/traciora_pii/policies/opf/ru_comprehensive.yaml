@@ -1,0 +1,50 @@
+# OPFPolicy: comprehensive label map for the Russian fine-tuned OPF model.
+#
+# Loaded only when OPF is enabled. Layered on top of a regex policy
+# (typically `regex/ru.yaml`); every placeholder referenced in `label_map`
+# below must be declared in the regex policy's `placeholders` list.
+#
+# PERSONAL_ID is a deliberately generic placeholder covering government-
+# issued personal identifiers (passport, driver's license, SSN,
+# Personalausweis). These have structurally collision-prone shapes that
+# no fine-tune can fully disambiguate. Domains needing per-type tracking
+# can introduce typed placeholders here and retrain the second-pass
+# model on labeled data for that vocabulary — the framework supports
+# arbitrary label spaces.
+
+name: ru_comprehensive
+locale: ru
+description: 19-label OPF map for the Russian fine-tuned model (PERSONAL_ID consolidation, BIK dropped)
+
+# Model output label -> placeholder. The placeholder must be declared in
+# the regex policy. Native OPF labels not listed here (e.g. private_date,
+# private_url) are intentionally dropped: they are policy hard negatives.
+label_map:
+  # Generic
+  private_person:    '[PERSON_NAME]'
+  private_address:   '[STREET_ADDRESS]'
+  private_email:     '[EMAIL]'
+  private_phone:     '[PHONE]'
+  account_number:    '[RU_BANK_ACCOUNT]'
+  secret:            '[SECRET]'
+  vehicle_plate:     '[LICENSE_PLATE]'
+  payment_card:      '[CARD]'
+  iban:              '[IBAN]'
+  ip_address:        '[IP]'
+
+  # Generic government-issued personal identifier. Covers the structurally
+  # colliding labels we previously tried to keep separate: ru_passport
+  # (XX YY ZZZZZZ) and ru_drv_license (XX YY ZZZZZZ) — identical shapes.
+  personal_id:       '[PERSONAL_ID]'
+
+  # Russian-specific government IDs and banking (distinguishable shapes)
+  ru_inn:            '[RU_INN]'
+  ru_snils:          '[RU_SNILS]'
+  ru_ogrn:           '[RU_OGRN]'
+  ru_bank_account:   '[RU_BANK_ACCOUNT]'
+  ru_kpp:            '[RU_KPP]'
+
+  # Russian vehicle document identifiers (PII under 152-FZ)
+  ru_vin:            '[VIN]'
+  ru_sts:            '[RU_STS]'
+  ru_osago:          '[RU_OSAGO]'

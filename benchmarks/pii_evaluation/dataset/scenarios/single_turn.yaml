@@ -1,0 +1,375 @@
+# Single-turn tool-task scenarios.
+#
+# Each scenario is rendered into 3 parallel near-translation EvalQuery
+# instances (EN / DE / RU). The tool name is identical across the
+# triplet; only language and locale-specific PII type vary.
+
+# ----------------------------------------------------------------------
+# Customer lookup by phone (8)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-001
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-002
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-003
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-004
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+# ----------------------------------------------------------------------
+# Customer lookup by email (6)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-010
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-st-011
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-st-012
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+# ----------------------------------------------------------------------
+# Customer lookup by name (3)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-020
+  bucket: single_turn
+  workflow: lookup_customer_by_name
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+- scenario_id: scn-st-021
+  bucket: single_turn
+  workflow: lookup_customer_by_name
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+# ----------------------------------------------------------------------
+# Cancel appointment by phone (3)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-030
+  bucket: single_turn
+  workflow: cancel_appointment_by_phone
+  turns:
+    - "{{intent_cancel_appointment}} {PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: appointment_cancel_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: appointment
+
+- scenario_id: scn-st-031
+  bucket: single_turn
+  workflow: cancel_appointment_by_phone
+  turns:
+    - "{{intent_cancel_appointment}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: appointment_cancel_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: appointment
+
+# ----------------------------------------------------------------------
+# Reschedule appointment by phone (2)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-035
+  bucket: single_turn
+  workflow: reschedule_appointment_by_phone
+  turns_per_locale:
+    en:
+      - "{{intent_reschedule_appointment}} {PHONE} to 2026-06-15 10:00."
+    de:
+      - "{{intent_reschedule_appointment}} {PHONE} auf 2026-06-15 10:00."
+    ru:
+      - "{{intent_reschedule_appointment}} {PHONE} на 2026-06-15 10:00."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: appointment_reschedule_by_phone
+      arguments: { phone: "{PHONE}", new_slot: "2026-06-15 10:00" }
+      record_key: appointment
+
+# ----------------------------------------------------------------------
+# Verify national ID (4) — id_type varies per locale (default rule)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-040
+  bucket: single_turn
+  workflow: verify_national_id
+  turns:
+    - "{{intent_verify_id}} {NATIONAL_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+- scenario_id: scn-st-041
+  bucket: single_turn
+  workflow: verify_national_id
+  turns:
+    - "{{intent_verify_id}} {NATIONAL_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+# An additional verify_national_id scenario forced to a non-default id_type
+# per locale, exercising the alternate national-id workflow.
+- scenario_id: scn-st-042
+  bucket: single_turn
+  workflow: verify_national_id_alt
+  id_type_per_locale:
+    en: us_ssn
+    de: de_steuer_id
+    ru: ru_passport
+  turns:
+    - "{{intent_verify_id}} {NATIONAL_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+# ----------------------------------------------------------------------
+# Payment lookup by card (2)
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-050
+  bucket: single_turn
+  workflow: payment_lookup_by_card
+  turns:
+    - "{{intent_lookup_card}} {CARD}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: payment_lookup_by_card
+      arguments: { card_number: "{CARD}" }
+      record_key: payment
+
+- scenario_id: scn-st-051
+  bucket: single_turn
+  workflow: payment_lookup_by_card
+  turns:
+    - "{{intent_lookup_card}} {CARD}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: payment_lookup_by_card
+      arguments: { card_number: "{CARD}" }
+      record_key: payment
+
+# ----------------------------------------------------------------------
+# Additional single-turn variants (13) — phrasing + PII format diversity
+# ----------------------------------------------------------------------
+- scenario_id: scn-st-060
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-061
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-062
+  bucket: single_turn
+  workflow: lookup_customer_by_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-st-070
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-st-071
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-st-072
+  bucket: single_turn
+  workflow: lookup_customer_by_email
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-st-080
+  bucket: single_turn
+  workflow: lookup_customer_by_name
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+- scenario_id: scn-st-081
+  bucket: single_turn
+  workflow: lookup_customer_by_name
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+- scenario_id: scn-st-090
+  bucket: single_turn
+  workflow: cancel_appointment_by_phone
+  turns:
+    - "{{intent_cancel_appointment}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: appointment_cancel_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: appointment
+
+- scenario_id: scn-st-095
+  bucket: single_turn
+  workflow: reschedule_appointment_by_phone
+  turns_per_locale:
+    en:
+      - "{{intent_reschedule_appointment}} {PHONE} to 2026-09-20 14:00."
+    de:
+      - "{{intent_reschedule_appointment}} {PHONE} auf 2026-09-20 14:00."
+    ru:
+      - "{{intent_reschedule_appointment}} {PHONE} на 2026-09-20 14:00."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: appointment_reschedule_by_phone
+      arguments: { phone: "{PHONE}", new_slot: "2026-09-20 14:00" }
+      record_key: appointment
+
+- scenario_id: scn-st-100
+  bucket: single_turn
+  workflow: verify_national_id
+  turns:
+    - "{{intent_verify_id}} {NATIONAL_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+- scenario_id: scn-st-101
+  bucket: single_turn
+  workflow: verify_national_id
+  turns:
+    - "{{intent_verify_id}} {NATIONAL_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+- scenario_id: scn-st-110
+  bucket: single_turn
+  workflow: payment_lookup_by_card
+  turns:
+    - "{{intent_lookup_card}} {CARD}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: payment_lookup_by_card
+      arguments: { card_number: "{CARD}" }
+      record_key: payment

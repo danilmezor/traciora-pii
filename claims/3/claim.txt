@@ -1,0 +1,82 @@
+================================================================
+Claim 3 — Full virtualization sharply reduces raw-PII egress
+          while largely preserving utility (paper §3)
+================================================================
+
+Statement
+----------------------------------------------------------------
+With the full traciora_pii virtualization pipeline active (regex +
+per-language OPF v2 fine-tune, vault, broker, leak guard), an LLM
+tool-calling agent preserves most baseline tool-call utility while
+reducing cumulative raw-PII transmissions to the model by more than
+99.5%. The remaining bounded residual is the code-switched typed-
+identifier failure mode documented in the paper.
+
+Headline numbers from the paper
+----------------------------------------------------------------
+  Baseline raw-PII transmissions:        17,631
+  Virtualization raw-PII transmissions:      65
+  Reduction:                              99.63%
+
+  Per-model baseline raw-PII:          2,066-2,311
+  Per-model virtualization raw-PII:         4-12
+
+  Average TSR across the eight models:
+    baseline:        ~92.3%
+    virtualization:  ~90.5%
+    delta:           ~-1.8pp
+
+  Seven of eight models are within 5.5 percentage points of baseline
+  under virtualization. The outlier is claude-haiku-4.5 (-20.3pp),
+  driven mostly by its Russian-language slice.
+
+Acceptance bounds
+----------------------------------------------------------------
+This claim has two reproduction modes:
+
+  SMOKE (default, ~5 min, ~$1):
+    1 LLM (claude-haiku-4.5) x English x 10 queries.
+    Acceptance: the run completes and produces a results JSON; the
+    virtualization TSR is in [0.7, 1.0]. Small-N raw-PII counts should
+    be inspected but are not used as the full-paper bound.
+
+  FULL (--full flag, ~16-20h, ~$20-50):
+    8 LLMs x 3 languages x 3 pipelines x 309 queries.
+    Acceptance:
+      - aggregated mean Δ TSR (virtualization - baseline) is in
+        [-5pp, +5pp] across the 8 models;
+      - virtualization cumulative raw-PII transmissions are < 100;
+      - raw-PII reduction versus baseline is > 99.5%;
+      - leak-guard trigger rate remains 0.0% in every cell.
+
+    Note: the reference run's per-cell JSON / MD outputs already ship
+    under benchmarks/pii_evaluation/results/. To force a fresh
+    reproduction rather than re-aggregate cached cells, delete
+    results_*__opf-{en,de,ru}.{json,md} before running.
+
+What `run.sh` does
+----------------------------------------------------------------
+By default, runs a single English smoke cell:
+  python -m benchmarks.pii_evaluation.run_experiment
+    --language en --limit 10
+    --second-pass opf --opf-model en
+    --llm-model anthropic/claude-haiku-4.5
+
+With `--full`, dispatches the full 24-cell matrix (8 LLMs × 3
+languages) and runs the Section 3 aggregators and forensics report.
+
+Requires PII_EVAL_API_KEY in .env, set to an OpenRouter key
+(format: sk-or-v1-...). Without the key, the script exits with
+a clear error and instructions.
+
+Where to look
+----------------------------------------------------------------
+Smoke output:
+  benchmarks/pii_evaluation/results/results_anthropic-claude-haiku-4.5__opf-en.md
+  benchmarks/pii_evaluation/results/results_anthropic-claude-haiku-4.5__opf-en.json
+  → diff against claims/3/expected/smoke/
+
+Full-matrix output:
+  benchmarks/pii_evaluation/results/section3_matrix.md
+  benchmarks/pii_evaluation/results/section3_forensics.md
+  → diff against claims/3/expected/full/

@@ -1,0 +1,11 @@
+# IPv4 ranges reserved for documentation by RFC 5737. Synthetic IPs are
+# always drawn from one of these blocks; values never resolve to any real
+# host and can never be confused with operational addresses.
+
+test_nets:
+  - {prefix: "192.0.2",   name: "TEST-NET-1"}
+  - {prefix: "198.51.100", name: "TEST-NET-2"}
+  - {prefix: "203.0.113", name: "TEST-NET-3"}
+
+# Last-octet range. Avoid 0 (network) and 255 (broadcast).
+host_octet_range: [1, 254]

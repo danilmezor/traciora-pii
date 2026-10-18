@@ -1,0 +1,38 @@
+# OPFPolicy: contextual label map for the English fine-tuned OPF model.
+#
+# Layered on top of `regex/en.yaml`; every placeholder referenced in
+# `label_map` must be declared in that regex policy's `placeholders` list.
+#
+# PERSONAL_ID is a deliberately generic placeholder covering government-
+# issued personal identifiers (passport, driver's license, SSN,
+# Personalausweis). These have structurally collision-prone shapes that
+# no fine-tune can fully disambiguate. Domains needing per-type tracking
+# can introduce typed placeholders here and retrain the second-pass
+# model on labeled data for that vocabulary — the framework supports
+# arbitrary label spaces.
+#
+# Scope: contextual-only labels — structured IDs that regex catches with
+# high precision (SSN, payment card, IBAN, IP, plate, VIN, passport) are
+# intentionally excluded so the fine-tune only learns labels regex can't.
+
+name: en_comprehensive
+locale: en
+description: Contextual label map for the English fine-tuned model (PERSONAL_ID added)
+
+# Native OPF labels that are intentionally dropped:
+#   private_date  — the regex layer handles dates with stricter context
+#                   anchors; the bare OPF date label has too many FPs.
+#   private_url   — URLs are not PII and tokenizing them breaks tool calls
+#                   (web_search/web_fetch arguments mangle in transit).
+label_map:
+  # Contextual labels (regex can't catch these — context-dependent)
+  private_person:    '[PERSON_NAME]'
+  private_address:   '[STREET_ADDRESS]'
+  private_email:     '[EMAIL]'
+  private_phone:     '[PHONE]'
+  secret:            '[SECRET]'
+
+  # Generic government-issued personal identifier. Covers US_SSN and
+  # passport — both 9-digit raw shapes with no internal structure to
+  # disambiguate them.
+  personal_id:       '[PERSONAL_ID]'

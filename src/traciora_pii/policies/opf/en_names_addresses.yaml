@@ -1,0 +1,13 @@
+# OPFPolicy: minimal base-OPF label map for English text — names + addresses only.
+# Used for ablation runs that isolate names+address detection performance.
+#
+# Layered on top of `regex/en.yaml`. Wire via OPFPIIDetector.from_config(...)
+# from a registered model entry in detector.opf.models.
+
+name: en_names_addresses
+locale: en
+description: Minimal base-OPF map — names and addresses only (ablation runs)
+
+label_map:
+  private_person:  '[PERSON_NAME]'
+  private_address: '[STREET_ADDRESS]'

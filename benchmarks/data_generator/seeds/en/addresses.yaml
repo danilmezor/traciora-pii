@@ -1,0 +1,352 @@
+# English / US address components. The generator picks a city and one of
+# its real street names, then combines it with synthetic house/apartment
+# numbers so the final address does not resolve to a real residence.
+
+city_streets:
+  - city: New York, NY
+    streets:
+      - Broadway
+      - Fifth Avenue
+      - Madison Avenue
+      - Park Avenue
+      - Lexington Avenue
+      - West 42nd Street
+      - Canal Street
+      - Houston Street
+
+  - city: Los Angeles, CA
+    streets:
+      - Sunset Boulevard
+      - Wilshire Boulevard
+      - Hollywood Boulevard
+      - Figueroa Street
+      - Olympic Boulevard
+      - Santa Monica Boulevard
+      - Melrose Avenue
+      - La Brea Avenue
+
+  - city: Chicago, IL
+    streets:
+      - Michigan Avenue
+      - State Street
+      - Wacker Drive
+      - Lake Shore Drive
+      - Clark Street
+      - Halsted Street
+      - Randolph Street
+      - Roosevelt Road
+
+  - city: Houston, TX
+    streets:
+      - Westheimer Road
+      - Main Street
+      - Kirby Drive
+      - Shepherd Drive
+      - Richmond Avenue
+      - Memorial Drive
+      - Fannin Street
+      - Montrose Boulevard
+
+  - city: Phoenix, AZ
+    streets:
+      - Central Avenue
+      - Camelback Road
+      - Thomas Road
+      - Indian School Road
+      - Bell Road
+      - Van Buren Street
+      - McDowell Road
+      - 7th Street
+
+  - city: Philadelphia, PA
+    streets:
+      - Market Street
+      - Broad Street
+      - Walnut Street
+      - Chestnut Street
+      - Arch Street
+      - Spring Garden Street
+      - Germantown Avenue
+      - South Street
+
+  - city: San Antonio, TX
+    streets:
+      - Broadway
+      - Commerce Street
+      - Houston Street
+      - Fredericksburg Road
+      - Culebra Road
+      - Military Drive
+      - San Pedro Avenue
+      - Wurzbach Road
+
+  - city: San Diego, CA
+    streets:
+      - Broadway
+      - University Avenue
+      - El Cajon Boulevard
+      - Balboa Avenue
+      - Garnet Avenue
+      - Mission Gorge Road
+      - Market Street
+      - Harbor Drive
+
+  - city: Dallas, TX
+    streets:
+      - Elm Street
+      - Main Street
+      - Commerce Street
+      - Greenville Avenue
+      - Lemmon Avenue
+      - Ross Avenue
+      - Mockingbird Lane
+      - Preston Road
+
+  - city: San Jose, CA
+    streets:
+      - Santa Clara Street
+      - The Alameda
+      - First Street
+      - San Carlos Street
+      - Stevens Creek Boulevard
+      - Almaden Boulevard
+      - Monterey Road
+      - Bascom Avenue
+
+  - city: Austin, TX
+    streets:
+      - Congress Avenue
+      - Lamar Boulevard
+      - Guadalupe Street
+      - Burnet Road
+      - Riverside Drive
+      - South First Street
+      - Barton Springs Road
+      - Cesar Chavez Street
+
+  - city: Jacksonville, FL
+    streets:
+      - Bay Street
+      - Main Street
+      - Atlantic Boulevard
+      - Beach Boulevard
+      - Riverside Avenue
+      - San Marco Boulevard
+      - University Boulevard
+      - Southside Boulevard
+
+  - city: Fort Worth, TX
+    streets:
+      - Main Street
+      - Lancaster Avenue
+      - Camp Bowie Boulevard
+      - Magnolia Avenue
+      - Hulen Street
+      - Berry Street
+      - University Drive
+      - Rosedale Street
+
+  - city: Columbus, OH
+    streets:
+      - High Street
+      - Broad Street
+      - Cleveland Avenue
+      - Morse Road
+      - Bethel Road
+      - Neil Avenue
+      - Livingston Avenue
+      - Lane Avenue
+
+  - city: Charlotte, NC
+    streets:
+      - Tryon Street
+      - Trade Street
+      - Independence Boulevard
+      - South Boulevard
+      - Providence Road
+      - Central Avenue
+      - Morehead Street
+      - Sharon Road
+
+  - city: San Francisco, CA
+    streets:
+      - Market Street
+      - Mission Street
+      - Geary Boulevard
+      - Van Ness Avenue
+      - Lombard Street
+      - California Street
+      - Divisadero Street
+      - Castro Street
+
+  - city: Seattle, WA
+    streets:
+      - Pike Street
+      - Pine Street
+      - Madison Street
+      - Yesler Way
+      - Denny Way
+      - Aurora Avenue
+      - Broadway
+      - Rainier Avenue
+
+  - city: Denver, CO
+    streets:
+      - Colfax Avenue
+      - Broadway
+      - Speer Boulevard
+      - Federal Boulevard
+      - Colorado Boulevard
+      - Lincoln Street
+      - Blake Street
+      - Larimer Street
+
+  - city: Washington, DC
+    streets:
+      - Pennsylvania Avenue NW
+      - K Street NW
+      - Constitution Avenue NW
+      - Wisconsin Avenue NW
+      - Georgia Avenue NW
+      - H Street NE
+      - M Street NW
+      - Connecticut Avenue NW
+
+  - city: Boston, MA
+    streets:
+      - Commonwealth Avenue
+      - Boylston Street
+      - Beacon Street
+      - Tremont Street
+      - Washington Street
+      - Huntington Avenue
+      - Massachusetts Avenue
+      - Newbury Street
+
+  - city: Miami, FL
+    streets:
+      - Biscayne Boulevard
+      - Brickell Avenue
+      - Flagler Street
+      - Calle Ocho
+      - Coral Way
+      - Miami Avenue
+      - Northwest 7th Street
+      - South Dixie Highway
+
+  - city: Atlanta, GA
+    streets:
+      - Peachtree Street
+      - Ponce de Leon Avenue
+      - North Avenue
+      - Piedmont Avenue
+      - Edgewood Avenue
+      - Marietta Street
+      - Moreland Avenue
+      - Memorial Drive
+
+  - city: Minneapolis, MN
+    streets:
+      - Hennepin Avenue
+      - Nicollet Avenue
+      - Lake Street
+      - Washington Avenue
+      - Lyndale Avenue
+      - Franklin Avenue
+      - University Avenue SE
+      - Central Avenue NE
+
+  - city: Portland, OR
+    streets:
+      - Burnside Street
+      - Hawthorne Boulevard
+      - Division Street
+      - Sandy Boulevard
+      - Broadway
+      - Martin Luther King Jr Boulevard
+      - Belmont Street
+      - Alberta Street
+
+  - city: Nashville, TN
+    streets:
+      - Broadway
+      - Church Street
+      - West End Avenue
+      - Gallatin Pike
+      - Charlotte Avenue
+      - Demonbreun Street
+      - Music Row
+      - Murfreesboro Pike
+
+  - city: Las Vegas, NV
+    streets:
+      - Las Vegas Boulevard
+      - Fremont Street
+      - Charleston Boulevard
+      - Sahara Avenue
+      - Tropicana Avenue
+      - Flamingo Road
+      - Maryland Parkway
+      - Paradise Road
+
+  - city: Detroit, MI
+    streets:
+      - Woodward Avenue
+      - Michigan Avenue
+      - Jefferson Avenue
+      - Gratiot Avenue
+      - Grand River Avenue
+      - Cass Avenue
+      - Warren Avenue
+      - Fort Street
+
+  - city: Baltimore, MD
+    streets:
+      - Charles Street
+      - Pratt Street
+      - Lombard Street
+      - North Avenue
+      - York Road
+      - Light Street
+      - Eastern Avenue
+      - Falls Road
+
+  - city: Raleigh, NC
+    streets:
+      - Fayetteville Street
+      - Glenwood Avenue
+      - Hillsborough Street
+      - New Bern Avenue
+      - Capital Boulevard
+      - Oberlin Road
+      - Wade Avenue
+      - Western Boulevard
+
+  - city: Salt Lake City, UT
+    streets:
+      - State Street
+      - Main Street
+      - South Temple
+      - 400 South
+      - 700 East
+      - Foothill Drive
+      - Redwood Road
+      - North Temple
+
+formats:
+  - "{house} {street}, {city}"
+  - "{house} {street}, Apt {apt}, {city}"
+  - "{house} {street}, Unit {apt}, {city}"
+  - "{house} {street} #{apt}, {city}"
+  - "{house} {street}, Suite {apt}, {city}"
+  - "{house}-{korp} {street}, {city}"
+  - "{street}, Building {house}, Unit {apt}, {city}"
+  - "{city}, {house} {street}, Apt. {apt}"
+  - "{house} {street}, Floor {korp}, {city}"
+  - "Mailing address: {house} {street}, {city}"
+  - "{house} {street}, {city}, USA"
+  - "{house} {street}, Ste {apt}, {city}"
+
+house_range: [10, 9999]
+apt_range: [1, 999]
+korp_range: [1, 20]

@@ -1,0 +1,146 @@
+# English / US-centric identifier configuration. Algorithms and formatting
+# live in `faker_providers.py`; these lists are the seed data the helper reads.
+
+# SSN area numbers that satisfy the public syntactic rules enforced by the
+# regex layer. We avoid 000, 666, and 900-999.
+ssn_area_numbers:
+  - 001
+  - 004
+  - 012
+  - 031
+  - 042
+  - 055
+  - 064
+  - 078
+  - 089
+  - 101
+  - 119
+  - 132
+  - 145
+  - 156
+  - 167
+  - 178
+  - 189
+  - 201
+  - 212
+  - 223
+  - 234
+  - 245
+  - 256
+  - 267
+  - 278
+  - 289
+  - 301
+  - 312
+  - 323
+  - 334
+  - 345
+  - 356
+  - 367
+  - 378
+  - 389
+  - 401
+  - 412
+  - 423
+  - 434
+  - 445
+  - 456
+  - 467
+  - 478
+  - 489
+  - 501
+  - 512
+  - 523
+  - 534
+  - 545
+  - 556
+  - 567
+  - 578
+  - 589
+  - 601
+  - 612
+  - 623
+  - 634
+  - 645
+  - 657
+  - 665
+
+# NANP area codes used for realistic US phone examples. The helper keeps
+# exchange codes in 200-999 so the output remains syntactically plausible.
+phone_area_codes:
+  - 201
+  - 202
+  - 206
+  - 212
+  - 213
+  - 214
+  - 215
+  - 305
+  - 310
+  - 312
+  - 313
+  - 323
+  - 404
+  - 407
+  - 408
+  - 415
+  - 425
+  - 469
+  - 503
+  - 512
+  - 602
+  - 617
+  - 646
+  - 650
+  - 702
+  - 713
+  - 720
+  - 773
+  - 786
+  - 818
+  - 832
+  - 917
+  - 929
+  - 971
+
+phone_formats:
+  - "({area}) {exchange}-{line}"
+  - "{area}-{exchange}-{line}"
+  - "{area}.{exchange}.{line}"
+  - "+1 {area} {exchange} {line}"
+  - "+1-{area}-{exchange}-{line}"
+  - "1 ({area}) {exchange}-{line}"
+  - "+1 ({area}) {exchange}-{line}"
+  - "{area} {exchange} {line}"
+
+plate_letters: "ABCDEFGHJKLMNPRSTUVWXYZ"
+
+plate_states:
+  - CA
+  - NY
+  - TX
+  - FL
+  - IL
+  - PA
+  - AZ
+  - GA
+  - NC
+  - WA
+  - CO
+  - MA
+  - MI
+  - MD
+  - OR
+  - TN
+  - NV
+  - OH
+  - UT
+  - VA
+
+plate_formats:
+  - "{state} {serial}"
+  - "{state}-{serial}"
+  - "{state} {letters}-{digits}"
+  - "{letters}{digits} {state}"
+  - "{state} plate {serial}"
+  - "{state} tag {letters} {digits}"

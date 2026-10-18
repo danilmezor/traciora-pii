@@ -1,0 +1,140 @@
+# No-PII control scenarios.
+#
+# The model still calls a tool, but on a non-PII identifier (order ref,
+# ticket id). Detector should produce zero spans; tool-call success
+# scored normally. Catches false positives from over-eager regex
+# patterns that match digit-shaped identifiers (e.g. "ORD-1042").
+#
+# These scenarios reference the static _ORDERS table in tools.py
+# (order_401 etc.), so they need no per-scenario fixtures — only an
+# explicit ``expected_record_id`` on the call.
+
+- scenario_id: scn-ctl-501
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_401
+  literal_slots:
+    ORDER_ID: "ORD-1001"
+
+- scenario_id: scn-ctl-502
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_402
+  literal_slots:
+    ORDER_ID: "ORD-1042"
+
+- scenario_id: scn-ctl-503
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_408
+  literal_slots:
+    ORDER_ID: "ORD-2099"
+
+- scenario_id: scn-ctl-504
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_403
+  literal_slots:
+    ORDER_ID: "ORD-1057"
+
+- scenario_id: scn-ctl-505
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_404
+  literal_slots:
+    ORDER_ID: "ORD-1099"
+
+- scenario_id: scn-ctl-506
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_405
+  literal_slots:
+    ORDER_ID: "ORD-1112"
+
+- scenario_id: scn-ctl-507
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_406
+  literal_slots:
+    ORDER_ID: "ORD-2001"
+
+- scenario_id: scn-ctl-508
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_407
+  literal_slots:
+    ORDER_ID: "ORD-2042"
+
+- scenario_id: scn-ctl-509
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_408
+  literal_slots:
+    ORDER_ID: "ORD-2099"
+
+- scenario_id: scn-ctl-511
+  bucket: no_pii_control
+  workflow: order_lookup
+  turns:
+    - "{{intent_lookup_order}} {ORDER_ID}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: order_lookup_by_reference
+      arguments: { order_id: "{ORDER_ID}" }
+      expected_record_id: order_402
+  literal_slots:
+    ORDER_ID: "ORD-1042"

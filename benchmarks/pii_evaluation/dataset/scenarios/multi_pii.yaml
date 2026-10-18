@@ -1,0 +1,247 @@
+# Multi-PII single-turn scenarios.
+#
+# Two or more PII spans in one turn. Tests detector precision/recall on
+# co-located PII (does the merge step in redact_pii_text correctly
+# preserve all spans?) and tool-call disambiguation when multiple
+# entities could plausibly drive different lookups.
+#
+# All scenarios use ``turns_per_locale`` because the framing sentences
+# vary too much across English / German / Russian to render cleanly
+# from a single template + intent fragments. Native-speaker review of
+# the DE and RU phrasings is recommended before paper submission.
+
+# ----------------------------------------------------------------------
+# Two-PII (4)
+# ----------------------------------------------------------------------
+- scenario_id: scn-mp-301
+  bucket: multi_pii
+  workflow: lookup_email_with_phone_context
+  turns_per_locale:
+    en:
+      - "Reach out to the customer at {EMAIL} with phone {PHONE} — they need a callback."
+    de:
+      - "Kontaktiere den Kunden unter {EMAIL} mit Telefon {PHONE} — sie benötigen einen Rückruf."
+    ru:
+      - "Свяжись с клиентом по адресу {EMAIL} и номеру {PHONE} — нужен обратный звонок."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-mp-302
+  bucket: multi_pii
+  workflow: dispute_card_with_email
+  turns_per_locale:
+    en:
+      - "We need to dispute the charge on card {CARD} for the account at {EMAIL}."
+    de:
+      - "Wir müssen die Belastung auf Karte {CARD} für das Konto unter {EMAIL} anfechten."
+    ru:
+      - "Нужно оспорить списание с карты {CARD} для аккаунта по адресу {EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: payment_lookup_by_card
+      arguments: { card_number: "{CARD}" }
+      record_key: payment
+
+- scenario_id: scn-mp-303
+  bucket: multi_pii
+  workflow: lookup_phone_with_email_context
+  turns_per_locale:
+    en:
+      - "The customer at {EMAIL} reached us from phone {PHONE} — find their account."
+    de:
+      - "Der Kunde unter {EMAIL} hat uns von Telefon {PHONE} erreicht — finde sein Konto."
+    ru:
+      - "Клиент по адресу {EMAIL} обратился с номера {PHONE} — найди его аккаунт."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-304
+  bucket: multi_pii
+  workflow: lookup_name_with_phone_context
+  turns_per_locale:
+    en:
+      - "Pull the file for {PERSON_NAME} reachable at {PHONE}."
+    de:
+      - "Hole die Akte von {PERSON_NAME}, erreichbar unter {PHONE}."
+    ru:
+      - "Подними дело {PERSON_NAME}, доступен по номеру {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+# ----------------------------------------------------------------------
+# Three-PII (4)
+# ----------------------------------------------------------------------
+- scenario_id: scn-mp-310
+  bucket: multi_pii
+  workflow: triple_pii_lookup
+  turns_per_locale:
+    en:
+      - "Customer {PERSON_NAME}, phone {PHONE}, email {EMAIL} — open the file."
+    de:
+      - "Kunde {PERSON_NAME}, Telefon {PHONE}, E-Mail {EMAIL} — öffne die Akte."
+    ru:
+      - "Клиент {PERSON_NAME}, телефон {PHONE}, email {EMAIL} — открой дело."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-311
+  bucket: multi_pii
+  workflow: triple_pii_id_with_contact
+  turns_per_locale:
+    en:
+      - "Customer {PERSON_NAME} with national id {NATIONAL_ID}, reachable at {PHONE} — verify the id."
+    de:
+      - "Kunde {PERSON_NAME} mit nationaler Kennung {NATIONAL_ID}, erreichbar unter {PHONE} — überprüfe die Kennung."
+    ru:
+      - "Клиент {PERSON_NAME} с национальным идентификатором {NATIONAL_ID}, доступен по номеру {PHONE} — проверь идентификатор."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: verify_national_id
+      arguments: { id_type: "{ID_TYPE}", value: "{NATIONAL_ID}" }
+      record_key: "national_id:{ID_TYPE}"
+
+- scenario_id: scn-mp-320
+  bucket: multi_pii
+  workflow: triple_pii_card_email_phone
+  turns_per_locale:
+    en:
+      - "The customer at {EMAIL} disputed card {CARD} from phone {PHONE} — investigate."
+    de:
+      - "Der Kunde unter {EMAIL} hat Karte {CARD} vom Telefon {PHONE} aus angefochten — untersuche das."
+    ru:
+      - "Клиент по адресу {EMAIL} оспорил карту {CARD} с телефона {PHONE} — расследуй случай."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: payment_lookup_by_card
+      arguments: { card_number: "{CARD}" }
+      record_key: payment
+
+- scenario_id: scn-mp-321
+  bucket: multi_pii
+  workflow: triple_pii_name_phone_email
+  turns_per_locale:
+    en:
+      - "{PERSON_NAME} at {PHONE} ({EMAIL}) needs a callback."
+    de:
+      - "{PERSON_NAME} unter {PHONE} ({EMAIL}) benötigt einen Rückruf."
+    ru:
+      - "{PERSON_NAME} по телефону {PHONE} ({EMAIL}) — нужен обратный звонок."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+# ----------------------------------------------------------------------
+# Detection-only PII types embedded alongside a tool-touching span (6) —
+# folds the legacy detection_only bucket into Multi-PII per design.
+# IBAN / IP / URL / license_plate / DATE / VIN appear inline; the
+# detector is scored on those, the tool call is on phone or email.
+# ----------------------------------------------------------------------
+- scenario_id: scn-mp-401
+  bucket: multi_pii
+  workflow: phone_with_iban_context
+  turns_per_locale:
+    en:
+      - "The customer at {PHONE} sent the wire to IBAN {IBAN} yesterday — pull their account."
+    de:
+      - "Der Kunde unter {PHONE} hat die Überweisung an IBAN {IBAN} gestern gesendet — hole sein Konto."
+    ru:
+      - "Клиент по номеру {PHONE} отправил перевод на IBAN {IBAN} вчера — подними его аккаунт."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-402
+  bucket: multi_pii
+  workflow: email_with_ip_context
+  turns_per_locale:
+    en:
+      - "The customer {EMAIL} logged in from {IP} this morning — pull their record."
+    de:
+      - "Der Kunde {EMAIL} hat sich heute Morgen von {IP} angemeldet — hole seinen Datensatz."
+    ru:
+      - "Клиент {EMAIL} зашёл с IP {IP} сегодня утром — подними его карточку."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-mp-403
+  bucket: multi_pii
+  workflow: phone_with_url_context
+  turns_per_locale:
+    en:
+      - "The customer at {PHONE} clicked the link {URL} — investigate the session."
+    de:
+      - "Der Kunde unter {PHONE} hat den Link {URL} angeklickt — untersuche die Sitzung."
+    ru:
+      - "Клиент по номеру {PHONE} перешёл по ссылке {URL} — расследуй сессию."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-404
+  bucket: multi_pii
+  workflow: phone_with_license_plate_context
+  turns_per_locale:
+    en:
+      - "The customer at {PHONE}, vehicle plate {LICENSE_PLATE} — pull the file for the parking incident."
+    de:
+      - "Der Kunde unter {PHONE}, Kennzeichen {LICENSE_PLATE} — hole die Akte zum Parkvorfall."
+    ru:
+      - "Клиент по номеру {PHONE}, номер машины {LICENSE_PLATE} — подними дело по парковочному инциденту."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-405
+  bucket: multi_pii
+  workflow: phone_with_date_context
+  turns_per_locale:
+    en:
+      - "The customer at {PHONE}, born {DATE} — pull the account for verification."
+    de:
+      - "Der Kunde unter {PHONE}, geboren am {DATE} — hole das Konto zur Überprüfung."
+    ru:
+      - "Клиент по номеру {PHONE}, дата рождения {DATE} — подними аккаунт для верификации."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mp-406
+  bucket: multi_pii
+  workflow: email_with_vin_context
+  turns_per_locale:
+    en:
+      - "The customer at {EMAIL} owns vehicle VIN {VIN} — pull the account."
+    de:
+      - "Der Kunde unter {EMAIL} besitzt Fahrzeug-VIN {VIN} — hole das Konto."
+    ru:
+      - "Клиент по адресу {EMAIL} владеет автомобилем с VIN {VIN} — подними аккаунт."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email

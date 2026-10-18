@@ -1,0 +1,61 @@
+================================================================
+Claim 2 — Routed OPF maximizes recall/F1; qwen maximizes precision
+          (paper §2 detector ablation)
+================================================================
+
+Statement
+----------------------------------------------------------------
+Across the 309-query trilingual benchmark, the layered multilingual
+regex + routed per-language OPF v2 detector has the strongest recall
+and micro F1. The qwen-9B LLM detector row has the strongest precision,
+exposing the deployment trade-off discussed in the paper.
+
+Headline numbers from the paper
+----------------------------------------------------------------
+  Detector config                  Micro P   Micro R   Micro F1
+  regex_only                         0.908     0.692     0.785
+  regex + Presidio                   0.883     0.724     0.796
+  regex + base OPF                   0.880     0.891     0.885
+  regex + OPF routed (v2)            0.899     0.965     0.930
+  regex + LLM[ministral-3b]          0.912     0.731     0.811
+  regex + LLM[nemotron-9b]           0.917     0.779     0.842
+  regex + LLM[qwen-9b]               0.918     0.792     0.850
+
+Acceptance bounds
+----------------------------------------------------------------
+SMOKE mode (default, ~15 min, no API cost):
+  - detector_ablation_ablation.json + detector_ablation_ablation.md
+    generate without error across the four local/non-LLM configs.
+  - regex_opf_routed micro recall is in [0.93, 0.97].
+  - regex_opf_routed micro F1 is in [0.91, 0.95].
+  - regex_opf_routed strictly outscores every smoke config on both
+    micro recall and micro F1.
+
+FULL mode (--full, requires detector LLM backend/OpenRouter):
+  - The three paper-reported LLM detector rows complete and
+    section2_ablation_matrix.md contains seven rows total.
+  - regex_opf_routed has the highest micro recall and micro F1.
+  - regex_llm[qwen-9b] has the highest micro precision.
+
+What `run.sh` does
+----------------------------------------------------------------
+Smoke: calls run_detector_ablation.py with `--language all` and
+`--only regex_only,regex_opf_base,regex_opf_routed,regex_presidio`.
+
+Full: runs the smoke lineup plus the three LLM detector rows reported
+in the paper (`nvidia/nemotron-nano-9b-v2:free`,
+`qwen/qwen3.5-9b`, and `mistralai/ministral-3b-2512`), then rebuilds
+the aggregate section2_ablation_matrix.md table.
+
+Where to look
+----------------------------------------------------------------
+Smoke outputs:
+  benchmarks/pii_evaluation/results/detector_ablation_ablation.md
+  benchmarks/pii_evaluation/results/detector_ablation_ablation.json
+
+Full aggregate:
+  benchmarks/pii_evaluation/results/section2_ablation_matrix.md
+
+Reference snapshots:
+  claims/2/expected/smoke/
+  claims/2/expected/full/

@@ -1,0 +1,132 @@
+# traciora-pii — single source of truth for runtime configuration.
+#
+# Every flag, model name, endpoint, and timeout the library + benchmarks
+# need lives here. Override on a per-invocation basis via env vars (see
+# .env.example) or CLI flags. Secrets (API keys, Fernet keys) NEVER live
+# in this file — each consumer that needs a secret references an env-var
+# *name* (e.g. `api_key_env: PII_EVAL_API_KEY`) so the value is pulled
+# from `.env` / shell at the point of use.
+#
+# Precedence (highest → lowest):
+#   1. CLI flags applied at the call site
+#   2. PII_* / TRACIORA_PII_* env vars (see src/traciora_pii/config.py)
+#   3. This file
+#   4. Built-in defaults in src/traciora_pii/config.py
+
+# ----------------------------------------------------------------------
+# Detector wiring
+# ----------------------------------------------------------------------
+
+detector:
+  # Which second-pass detector runs after the regex first pass.
+  # one of: none | opf | llm | presidio
+  second_pass: none
+
+  # Categories to leave visible, applied to regex and all second-pass backends.
+  # Example: [plate, url]. Empty preserves the default detection coverage.
+  excluded_categories: []
+
+  # OPF (token-classification) second-pass.
+  # The `models` map is the registry — extend it by adding entries; remove
+  # by deleting them. `default_model` selects which entry runs when
+  # `second_pass: opf` is active and `--opf-model` isn't passed.
+  opf:
+    default_model: base
+    models:
+      base:
+        checkpoint: openai/privacy-filter
+        policy: en_comprehensive
+        description: "Base OPF token classifier (Apache 2.0); language-agnostic baseline."
+      ru:
+        checkpoint: pii-anon/opf-ru-v2
+        policy: ru_comprehensive
+        description: "Fine-tuned OPF for Russian PII (v2; auto-fetched from anonymous HF on first use)."
+      en:
+        checkpoint: pii-anon/opf-en-v2
+        policy: en_comprehensive
+        description: "Fine-tuned OPF for English PII (v2; auto-fetched from anonymous HF on first use)."
+      de:
+        checkpoint: pii-anon/opf-de-v2
+        policy: de_comprehensive
+        description: "Fine-tuned OPF for German PII (v2; auto-fetched from anonymous HF on first use)."
+    device: cpu                  # cpu | cuda | mps
+    prefilter: false             # cheap regex prefilter before OPF forward pass
+    cache_dir: null              # null = ~/.cache/traciora_pii/models/opf
+
+  # LLM (OpenAI-compatible) second-pass detector. Defaults to OpenRouter
+  # so any small open-weight model (Nemotron, Llama, Mistral, Gemma) can
+  # be selected by prefix-routed name at runtime. There is intentionally
+  # **no default model** — every run must pass --detector-llm-model on
+  # the CLI so the detector model is explicit in every reported result.
+  # Examples of free-tier OpenRouter models that fit a locally-hostable
+  # 4–9B parameter envelope:
+  #   nvidia/nemotron-nano-9b-v2:free
+  #   meta-llama/llama-3.2-3b-instruct:free
+  #   google/gemma-2-2b-it:free
+  #   qwen/qwen-2.5-7b-instruct:free
+  # Pointing base_url at LM Studio / Ollama / vLLM works unchanged.
+  llm:
+    base_url: https://openrouter.ai/api/v1
+    model: null                    # required at runtime via --detector-llm-model
+    api_key_env: PII_EVAL_API_KEY  # shared with the eval LLM by default
+    timeout_seconds: 30.0
+    prefilter: true
+    # 1024 instead of 256 so reasoning-mode models (qwen3.5, deepseek-r1)
+    # have headroom to finish their hidden CoT before emitting the JSON
+    # answer. Non-reasoning models cap out well below this and pay no cost.
+    max_tokens: 1024
+
+  # Microsoft Presidio second-pass — used as a third-party detector
+  # baseline alongside OPF / LLM. One language per detector instance
+  # (Presidio loads spaCy per language). Install: pip install -e '.[presidio]'
+  # plus `python -m spacy download <lang>_core_news_sm`.
+  presidio:
+    language: en                   # en | de | ru (requires matching spaCy model)
+    score_threshold: 0.5           # min Presidio confidence
+    prefilter: false               # share the OPF/LLM cheap-negative gate
+    nlp_model: ""                  # spaCy model; empty = "<lang>_core_news_lg" for de/ru, "en_core_web_lg" for en
+    label_map: {}                  # empty = package default (PERSON only — see DEFAULT_LABEL_MAP)
+    entities: []                   # empty = derive from label_map
+
+  # First-pass regex layer. Two mutually exclusive forms:
+  #   regex_policies: list of built-in names — patterns from each are
+  #     unioned (declaration order = en, then de, then ru); within the
+  #     union the first-listed pattern still wins on overlap. Use this
+  #     when the runtime may receive content in any of several languages
+  #     so typed identifiers (DE Steuer-ID, US SSN, RU SNILS) are caught
+  #     regardless of the surrounding prose language.
+  #   regex_policy: single built-in name or path. Legacy/single-locale
+  #     deployments. Setting this alone keeps the historical behavior.
+  regex_policies: [en, de, ru]
+
+  # Master switch for the anonymize/rehydrate pipeline. False = no-op.
+  masking_enabled: true
+  # Final-output safety net that scans assistant responses for raw refs.
+  leak_guard_enabled: true
+
+# ----------------------------------------------------------------------
+# Benchmark eval harness
+# ----------------------------------------------------------------------
+
+eval:
+  llm:
+    enabled: false                       # gate to avoid accidental LLM spend
+    # No default model on purpose — every run must pass --llm-model
+    # <name> on the CLI so reviewers can see exactly which model produced
+    # each result. Model names use OpenRouter's prefix-routing convention
+    # (e.g. anthropic/claude-sonnet-4-6, openai/gpt-4o, google/gemini-pro-1.5).
+    # See https://openrouter.ai/docs#models for the full catalog.
+    model: null
+    api_key_env: PII_EVAL_API_KEY        # set this to an OpenRouter key (sk-or-v1-...)
+    base_url: https://openrouter.ai/api/v1
+    temperature: 0.0
+    max_tokens: 512
+  results_dir: benchmarks/pii_evaluation/results
+  max_agent_iterations: 4
+
+# ----------------------------------------------------------------------
+# Vault (encrypted PII store)
+# ----------------------------------------------------------------------
+
+vault:
+  encryption_key_env: PII_VAULT_KEY      # missing → ephemeral key per session

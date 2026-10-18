@@ -1,0 +1,92 @@
+# German-specific identifier configuration. The algorithms live in
+# `faker_providers.py`; these are the data tables and format strings.
+
+steuer_id_formats:
+  - "{a}{b}{c}{d}"
+  - "{a} {b} {c} {d}"
+  - "{a}-{b}-{c}-{d}"
+
+personalausweis_first_letters: "CFGHJKLMNPRTVWXYZ"
+personalausweis_alphabet: "0123456789ABCDEFGHJKLMNPRTVWXYZ"
+
+phone_area_codes:
+  - "30"    # Berlin
+  - "40"    # Hamburg
+  - "89"    # München
+  - "221"   # Köln
+  - "69"    # Frankfurt am Main
+  - "711"   # Stuttgart
+  - "211"   # Düsseldorf
+  - "341"   # Leipzig
+  - "231"   # Dortmund
+  - "201"   # Essen
+  - "421"   # Bremen
+  - "351"   # Dresden
+  - "511"   # Hannover
+  - "911"   # Nürnberg
+  - "203"   # Duisburg
+  - "234"   # Bochum
+  - "202"   # Wuppertal
+  - "521"   # Bielefeld
+  - "228"   # Bonn
+  - "251"   # Münster
+  - "721"   # Karlsruhe
+  - "621"   # Mannheim
+  - "821"   # Augsburg
+  - "761"   # Freiburg im Breisgau
+  - "431"   # Kiel
+  - "151"   # mobile
+  - "152"
+  - "157"
+  - "160"
+  - "170"
+  - "171"
+  - "172"
+  - "173"
+  - "174"
+  - "176"
+  - "177"
+  - "179"
+
+phone_formats:
+  - "+49 {area} {subscriber}"
+  - "+49-{area}-{subscriber}"
+  - "+49 ({area}) {subscriber}"
+  - "0049 {area} {subscriber}"
+  - "0049-{area}-{subscriber}"
+  - "0{area} {subscriber}"
+  - "0{area}-{subscriber}"
+  - "0049 ({area}) {subscriber}"
+
+plate_city_codes:
+  - B
+  - HH
+  - M
+  - K
+  - F
+  - S
+  - D
+  - L
+  - DO
+  - E
+  - HB
+  - DD
+  - H
+  - N
+  - DU
+  - BO
+  - W
+  - BI
+  - BN
+  - MS
+  - KA
+  - MA
+  - A
+  - FR
+  - KI
+
+plate_formats:
+  - "{city_code}-{letters} {digits}"
+  - "{city_code} {letters} {digits}"
+  - "{city_code}-{letters}-{digits}"
+  - "{city_code} {letters}{digits}"

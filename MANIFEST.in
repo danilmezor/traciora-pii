@@ -1,0 +1,19 @@
+include LICENSE README.md CONFIGURATION.md pyproject.toml traciora.yaml
+recursive-include tests *.py
+recursive-include benchmarks *.py *.md *.yaml
+recursive-include fine_tuning *.py *.md
+recursive-include scripts *.sh
+recursive-include claims *.sh *.txt
+recursive-exclude benchmarks/pii_evaluation/results *
+recursive-exclude benchmarks/pii_evaluation/dataset/data *
+recursive-exclude benchmarks/data_import/reports *
+recursive-exclude benchmarks/data_import/cache *
+recursive-exclude fine_tuning/data *
+recursive-exclude fine_tuning/runs *
+recursive-exclude claims/1/expected *
+recursive-exclude claims/2/expected *
+recursive-exclude claims/3/expected *
+exclude scripts/push_anon_models.sh
+exclude .env .env.* *.local.yaml *.local.yml *.local.json
+recursive-exclude . __pycache__ *.py[cod] .DS_Store *.db *.db-* *.sqlite* *.log *.csv *.tsv *.parquet *.arrow *.jsonl *.jsonl.* *.safetensors *.ckpt *.pt *.pth *.onnx
+include .env.example

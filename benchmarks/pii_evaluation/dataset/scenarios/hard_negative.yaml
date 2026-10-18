@@ -1,0 +1,144 @@
+# Hard-negative scenarios.
+#
+# Numeric noise that mimics PII patterns but lacks the contextual anchor
+# the regex requires. The detector should NOT fire; tool-call success is
+# excluded from the denominator (no expected_tool_calls), so these
+# scenarios only score detection precision.
+#
+# Every scenario uses ``turns_per_locale`` because the framing
+# sentences are the whole point of the hard negative — a German turn
+# must read like a German turn, not a German noun + English tail.
+# Native-speaker review of DE/RU is recommended before paper submission.
+
+- scenario_id: scn-neg-601
+  bucket: hard_negative
+  workflow: order_tracking_digits
+  turns_per_locale:
+    en:
+      - "Tracking number 7707083893 was shipped yesterday."
+    de:
+      - "Sendungsnummer 7707083893 wurde gestern versandt."
+    ru:
+      - "Трекинг-номер 7707083893 был отправлен вчера."
+
+- scenario_id: scn-neg-602
+  bucket: hard_negative
+  workflow: build_version
+  turns_per_locale:
+    en:
+      - "We rolled out version 2.1.4 to all clusters at 14:30 UTC."
+    de:
+      - "Wir haben Version 2.1.4 um 14:30 UTC auf allen Clustern ausgerollt."
+    ru:
+      - "Мы выкатили версию 2.1.4 на все кластеры в 14:30 UTC."
+
+- scenario_id: scn-neg-603
+  bucket: hard_negative
+  workflow: meeting_room
+  turns_per_locale:
+    en:
+      - "The meeting is in room 4321 at 9:00 sharp."
+    de:
+      - "Das Meeting ist in Raum 4321 um 9:00 pünktlich."
+    ru:
+      - "Встреча в кабинете 4321 ровно в 9:00."
+
+- scenario_id: scn-neg-604
+  bucket: hard_negative
+  workflow: zip_code
+  turns_per_locale:
+    en:
+      - "The customer's billing zip is 90210, not the shipping one."
+    de:
+      - "Die Rechnungs-PLZ des Kunden ist 90210, nicht die Versand-PLZ."
+    ru:
+      - "Платёжный индекс клиента — 90210, а не индекс доставки."
+
+- scenario_id: scn-neg-605
+  bucket: hard_negative
+  workflow: iso_timestamp
+  turns_per_locale:
+    en:
+      - "Event timestamp 2025-04-07T14:30:00Z appears in the audit log."
+    de:
+      - "Ereigniszeitstempel 2025-04-07T14:30:00Z erscheint im Audit-Log."
+    ru:
+      - "Время события 2025-04-07T14:30:00Z встречается в журнале аудита."
+
+- scenario_id: scn-neg-606
+  bucket: hard_negative
+  workflow: uuid_trace
+  turns_per_locale:
+    en:
+      - "Trace ID 550e8400-e29b-41d4-a716-446655440000 appeared in the failure log."
+    de:
+      - "Trace-ID 550e8400-e29b-41d4-a716-446655440000 ist im Fehlerprotokoll aufgetaucht."
+    ru:
+      - "Trace-ID 550e8400-e29b-41d4-a716-446655440000 встретился в логе сбоев."
+
+- scenario_id: scn-neg-607
+  bucket: hard_negative
+  workflow: order_tracking_digits_v2
+  turns_per_locale:
+    en:
+      - "Order 1027700132195 was closed yesterday."
+    de:
+      - "Bestellung 1027700132195 wurde gestern geschlossen."
+    ru:
+      - "Заказ 1027700132195 был закрыт вчера."
+
+- scenario_id: scn-neg-608
+  bucket: hard_negative
+  workflow: build_version_v2
+  turns_per_locale:
+    en:
+      - "Build 5.2.0.1234 was deployed to staging cluster 03."
+    de:
+      - "Build 5.2.0.1234 wurde auf Staging-Cluster 03 ausgerollt."
+    ru:
+      - "Сборка 5.2.0.1234 была выкачена на staging-кластер 03."
+
+- scenario_id: scn-neg-609
+  bucket: hard_negative
+  workflow: meeting_room_v2
+  turns_per_locale:
+    en:
+      - "The standup is in room 412 at 09:30."
+    de:
+      - "Das Standup ist in Raum 412 um 09:30 Uhr."
+    ru:
+      - "Стендап в кабинете 412 в 09:30."
+
+- scenario_id: scn-neg-610
+  bucket: hard_negative
+  workflow: zip_code_v2
+  turns_per_locale:
+    en:
+      - "The customer's billing zip is 10001."
+    de:
+      - "Die Rechnungs-PLZ des Kunden ist 10001."
+    ru:
+      - "Платёжный индекс клиента — 10001."
+
+- scenario_id: scn-neg-611
+  bucket: hard_negative
+  workflow: iso_timestamp_v2
+  turns_per_locale:
+    en:
+      - "Event timestamp 2024-12-31T23:59:59Z appears in the audit table."
+    de:
+      - "Ereigniszeitstempel 2024-12-31T23:59:59Z erscheint in der Audit-Tabelle."
+    ru:
+      - "Время события 2024-12-31T23:59:59Z встречается в таблице аудита."
+
+- scenario_id: scn-neg-612
+  bucket: hard_negative
+  workflow: uuid_trace_v2
+  turns_per_locale:
+    en:
+      - "Trace ID a1b2c3d4-e5f6-7890-abcd-ef1234567890 appeared twice."
+    de:
+      - "Trace-ID a1b2c3d4-e5f6-7890-abcd-ef1234567890 ist zweimal aufgetaucht."
+    ru:
+      - "Trace-ID a1b2c3d4-e5f6-7890-abcd-ef1234567890 встретился дважды."
+

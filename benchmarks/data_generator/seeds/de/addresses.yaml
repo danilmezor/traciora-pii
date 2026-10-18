@@ -1,0 +1,273 @@
+# German address components. City/street pairs use real German cities and
+# recognizable street names, combined with synthetic house/apartment numbers.
+# `plz_city_streets` powers the DE_PLZ_CITY slot.
+
+city_streets:
+  - city: Berlin
+    streets:
+      - Friedrichstraße
+      - Unter den Linden
+      - Kurfürstendamm
+      - Karl-Marx-Allee
+      - Torstraße
+      - Sonnenallee
+
+  - city: Hamburg
+    streets:
+      - Reeperbahn
+      - Mönckebergstraße
+      - Jungfernstieg
+      - Grindelallee
+      - Lübecker Straße
+      - Osterstraße
+
+  - city: München
+    streets:
+      - Leopoldstraße
+      - Maximilianstraße
+      - Sonnenstraße
+      - Landsberger Straße
+      - Dachauer Straße
+      - Rosenheimer Straße
+
+  - city: Köln
+    streets:
+      - Hohe Straße
+      - Schildergasse
+      - Aachener Straße
+      - Venloer Straße
+      - Luxemburger Straße
+      - Neusser Straße
+
+  - city: Frankfurt am Main
+    streets:
+      - Zeil
+      - Kaiserstraße
+      - Bockenheimer Landstraße
+      - Hanauer Landstraße
+      - Eschersheimer Landstraße
+      - Mainzer Landstraße
+
+  - city: Stuttgart
+    streets:
+      - Königstraße
+      - Theodor-Heuss-Straße
+      - Rotebühlstraße
+      - Neckarstraße
+      - Heilbronner Straße
+      - Olgastraße
+
+  - city: Düsseldorf
+    streets:
+      - Königsallee
+      - Schadowstraße
+      - Graf-Adolf-Straße
+      - Immermannstraße
+      - Ackerstraße
+      - Bilker Allee
+
+  - city: Leipzig
+    streets:
+      - Grimmaische Straße
+      - Karl-Liebknecht-Straße
+      - Eisenbahnstraße
+      - Käthe-Kollwitz-Straße
+      - Prager Straße
+      - Delitzscher Straße
+
+  - city: Dortmund
+    streets:
+      - Westenhellweg
+      - Hohe Straße
+      - Rheinische Straße
+      - Münsterstraße
+      - Kaiserstraße
+      - Märkische Straße
+
+  - city: Essen
+    streets:
+      - Kettwiger Straße
+      - Rüttenscheider Straße
+      - Frohnhauser Straße
+      - Altendorfer Straße
+      - Hachestraße
+      - Holsterhauser Straße
+
+  - city: Bremen
+    streets:
+      - Obernstraße
+      - Sögestraße
+      - Am Wall
+      - Waller Heerstraße
+      - Schwachhauser Heerstraße
+      - Langemarckstraße
+
+  - city: Dresden
+    streets:
+      - Prager Straße
+      - Hauptstraße
+      - Bautzner Straße
+      - Königsbrücker Straße
+      - Leipziger Straße
+      - Kesselsdorfer Straße
+
+  - city: Hannover
+    streets:
+      - Georgstraße
+      - Lister Meile
+      - Podbielskistraße
+      - Hildesheimer Straße
+      - Vahrenwalder Straße
+      - Marienstraße
+
+  - city: Nürnberg
+    streets:
+      - Karolinenstraße
+      - Königstraße
+      - Fürther Straße
+      - Sulzbacher Straße
+      - Regensburger Straße
+      - Äußere Bayreuther Straße
+
+  - city: Duisburg
+    streets:
+      - Königstraße
+      - Düsseldorfer Straße
+      - Mülheimer Straße
+      - Ruhrorter Straße
+      - Wanheimer Straße
+      - Friedrich-Wilhelm-Straße
+
+  - city: Bochum
+    streets:
+      - Kortumstraße
+      - Hattinger Straße
+      - Universitätsstraße
+      - Castroper Straße
+      - Herner Straße
+      - Wittener Straße
+
+  - city: Wuppertal
+    streets:
+      - Friedrich-Ebert-Straße
+      - Hofaue
+      - Gathe
+      - Uellendahler Straße
+      - Barmenstraße
+      - Cronenberger Straße
+
+  - city: Bielefeld
+    streets:
+      - Bahnhofstraße
+      - Detmolder Straße
+      - Herforder Straße
+      - Jöllenbecker Straße
+      - Artur-Ladebeck-Straße
+      - Heeper Straße
+
+  - city: Bonn
+    streets:
+      - Sternstraße
+      - Oxfordstraße
+      - Adenauerallee
+      - Reuterstraße
+      - Kölnstraße
+      - Bornheimer Straße
+
+  - city: Münster
+    streets:
+      - Prinzipalmarkt
+      - Salzstraße
+      - Wolbecker Straße
+      - Hammer Straße
+      - Warendorfer Straße
+      - Grevener Straße
+
+  - city: Karlsruhe
+    streets:
+      - Kaiserstraße
+      - Kriegsstraße
+      - Ettlinger Straße
+      - Karlstraße
+      - Durlacher Allee
+      - Rüppurrer Straße
+
+  - city: Mannheim
+    streets:
+      - Planken
+      - Breite Straße
+      - Augustaanlage
+      - Seckenheimer Straße
+      - Schwetzinger Straße
+      - Waldhofstraße
+
+  - city: Augsburg
+    streets:
+      - Maximilianstraße
+      - Annastraße
+      - Gögginger Straße
+      - Donauwörther Straße
+      - Friedberger Straße
+      - Haunstetter Straße
+
+  - city: Freiburg im Breisgau
+    streets:
+      - Kaiser-Joseph-Straße
+      - Bertoldstraße
+      - Habsburgerstraße
+      - Günterstalstraße
+      - Schwarzwaldstraße
+      - Merzhauser Straße
+
+  - city: Kiel
+    streets:
+      - Holstenstraße
+      - Sophienblatt
+      - Feldstraße
+      - Westring
+      - Preetzer Straße
+      - Eckernförder Straße
+
+plz_city_streets:
+  - {plz: "10115", city: Berlin}
+  - {plz: "20095", city: Hamburg}
+  - {plz: "80331", city: München}
+  - {plz: "50667", city: Köln}
+  - {plz: "60311", city: Frankfurt am Main}
+  - {plz: "70173", city: Stuttgart}
+  - {plz: "40213", city: Düsseldorf}
+  - {plz: "04109", city: Leipzig}
+  - {plz: "44135", city: Dortmund}
+  - {plz: "45127", city: Essen}
+  - {plz: "28195", city: Bremen}
+  - {plz: "01067", city: Dresden}
+  - {plz: "30159", city: Hannover}
+  - {plz: "90402", city: Nürnberg}
+  - {plz: "47051", city: Duisburg}
+  - {plz: "44787", city: Bochum}
+  - {plz: "42103", city: Wuppertal}
+  - {plz: "33602", city: Bielefeld}
+  - {plz: "53111", city: Bonn}
+  - {plz: "48143", city: Münster}
+  - {plz: "76133", city: Karlsruhe}
+  - {plz: "68159", city: Mannheim}
+  - {plz: "86150", city: Augsburg}
+  - {plz: "79098", city: Freiburg im Breisgau}
+  - {plz: "24103", city: Kiel}
+
+formats:
+  - "{street} {house}, {city}"
+  - "{street} {house}, Whg. {apt}, {city}"
+  - "{street} {house}, Wohnung {apt}, {city}"
+  - "{street} {house}/{korp}, {city}"
+  - "{city}, {street} {house}"
+  - "{street} {house}, Etage {korp}, {city}"
+  - "{street} {house}, Haus {korp}, {city}"
+  - "{street} {house}-{korp}, {city}"
+  - "{street} {house}, App. {apt}, {city}"
+
+house_range: [1, 250]
+apt_range: [1, 200]
+korp_range: [1, 20]
+apt_range: [1, 200]
+korp_range: [1, 20]

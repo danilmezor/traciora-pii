@@ -1,0 +1,21 @@
+# Documentation-reserved domains (RFC 2606). Generated emails and URLs
+# always pull from this list, so no synthetic value can ever resolve to
+# a real site.
+
+reserved:
+  - example.com
+  - example.org
+  - example.net
+
+# Optional locale-flavoured reserved variants. These are still documentation
+# domains: the IANA-reserved ".test" / ".invalid" / ".localhost" TLDs and
+# common "compagny test" patterns. The data_generator filters never emit
+# real-world domains.
+reserved_extra:
+  - example.test
+  - example.invalid
+  - corp.example
+  - mail.example
+  - shop.example
+  - service.test
+  - office.test

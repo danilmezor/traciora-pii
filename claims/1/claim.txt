@@ -1,0 +1,83 @@
+================================================================
+Claim 1 — Cross-source detection generalization (paper §1)
+================================================================
+
+Statement
+----------------------------------------------------------------
+Our per-language fine-tuned OpenAI Privacy Filter (OPF)
+checkpoints beat Microsoft Presidio (industry NER baseline) on
+held-out cross-source PII corpora across all three evaluated
+languages, under projection-symmetric scoring.
+
+Headline numbers from the paper (n=1000 per corpus)
+----------------------------------------------------------------
+  Micro F1 delta (regex+OPF vs. regex+Presidio):
+    English  (nemotron_en):    +0.110
+    German   (ai4privacy_de):  +0.059
+    Russian  (wolframko_ru):   +0.051
+
+  The OPF win holds in every language tested.
+
+Acceptance bounds
+----------------------------------------------------------------
+SMOKE mode (default, --smoke, ~10 min, n=200 per corpus):
+  - All 9 evaluation cells (3 corpora × 3 detector configs)
+    complete without error.
+  - For each language, micro F1 of `regex_opf__<lang>` exceeds
+    micro F1 of `regex_presidio` by at least 0.025 (i.e. half
+    the smallest paper delta, allowing for 200-row subsample
+    variance).
+  - The relative ranking (OPF > Presidio > regex_only on every
+    language) is preserved.
+
+  Note on Presidio reproducibility: the `regex_presidio` cells
+  may not bit-exactly match expected/smoke/ — Presidio routes
+  PERSON / LOCATION / DATE recognizers through spaCy NER, whose
+  per-token scores vary across `en_core_web_lg` / `de_core_news_lg`
+  / `ru_core_news_lg` releases. Per-placeholder TP/FP counts can
+  shift by single-digit amounts and micro F1 by ±0.02 between
+  spaCy versions. The acceptance bound above (`+0.025` OPF lead)
+  is set wide enough to absorb that variance. `regex_only` and
+  `regex_opf` cells are deterministic and should match exactly
+  modulo elapsed-time numbers.
+
+FULL mode (--full, ~3-4 h, ~$0.05 OpenRouter):
+  - All 21 cells (3 corpora × 7 detector configs) complete
+    without error at n=1000.
+  - Each cell's macro/micro F1 falls within the 95% CI of the
+    matching cell in claims/1/expected/full/.
+  - regex_opf beats regex_presidio on every language by at
+    least the paper deltas above (within CI).
+
+What `run.sh` does
+----------------------------------------------------------------
+Smoke: runs run_imported_dataset_eval.py 9 times — each of the
+three corpora (nemotron_en, ai4privacy_de, wolframko_ru) against
+each of three configs (regex_only, regex_opf with the language-
+matched fine-tune, regex_presidio). 200 rows per cell, capped at
+600 raw rows to keep the run under 10 minutes.
+
+Full: runs the full 21-cell matrix at 1000 rows per cell via
+benchmarks/pii_evaluation/run_section1_matrix_n1000.sh. Adds four
+small LLM detector backends per corpus:
+  nvidia/nemotron-nano-9b-v2  qwen/qwen3.5-9b
+  google/gemma-3-4b-it        mistralai/ministral-3b-2512
+
+Smoke has no API cost (all detectors run locally). Full requires
+PII_EVAL_API_KEY set to an OpenRouter key for the four LLM cells
+(~$0.05 total across the 12 LLM cells in the matrix).
+
+Where to look
+----------------------------------------------------------------
+Smoke outputs land at:
+  benchmarks/pii_evaluation/results/imported_eval_*.md
+
+Full outputs land at:
+  benchmarks/pii_evaluation/results/n1000/imported_eval_*.md
+
+Reference snapshots (paper numbers) are at:
+  claims/1/expected/smoke/    (n=200, 9 cells)
+  claims/1/expected/full/     (n=1000, 21 cells — paper headline)
+
+The micro F1 row at the bottom of each Per-placeholder table
+is the headline metric.

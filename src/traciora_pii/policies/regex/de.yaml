@@ -1,0 +1,180 @@
+# RegexPolicy: German-locale placeholder taxonomy + first-pass regex layer.
+#
+# Covers German-specific identifiers (Steuer-ID / IdNr, Personalausweis) plus
+# the universal patterns (email, credit card, IP, IBAN, date of birth) that
+# also apply in German contexts. German phone numbers get their own pattern
+# because the +49 / 0049 prefix and city-code lengths differ from the US
+# format too much to share.
+#
+# OPF/training-only placeholders (PERSON_NAME, STREET_ADDRESS, SECRET,
+# LICENSE_PLATE, VIN) are declared here so non-regex layers and generated
+# datasets use the same vault taxonomy.
+#
+# Pattern ordering matters: keyword-anchored patterns are listed before
+# unconditional ones so contextual matches (e.g. an IdNr that requires
+# `Steuer-ID` or `IdNr` nearby) outrank generic numeric patterns.
+
+name: de
+locale: de
+description: German PII regex layer — DE government IDs, contacts, payment, plus universal patterns
+
+vocab_normalization:
+  cyrillic_aware: false
+  lemmatizer: null
+
+# ---- Placeholder taxonomy ---------------------------------------------------
+# Declare every placeholder the system can emit for German content. OPF-only
+# placeholders (no `pattern` below) are included so the OPF layer can vault
+# them alongside the regex hits.
+placeholders:
+  # — emitted by regex patterns —
+  - placeholder: '[DE_STEUER_ID]'
+    vault_category: steuer_id
+    description: German Steuerliche Identifikationsnummer (IdNr) — 11-digit personal tax ID
+  - placeholder: '[PERSONAL_ID]'
+    vault_category: personal_id
+    description: Government-issued personal identifier (passport, driver's license, SSN, Personalausweis). Generic on purpose — Personalausweis and Reisepass share the [CFGHJKLMNPRTVWXYZ][0-9A-Z]{9} shape and cannot be disambiguated structurally. Domains needing per-type tracking should introduce typed placeholders + retrain.
+  - placeholder: '[PHONE]'
+    vault_category: phone
+    description: DACH mobile or landline phone number (+49/+43/+41 or 0049/0043/0041 international form, leading-0 domestic form). Accepts space/dash/dot/parenthesis separators.
+  - placeholder: '[EMAIL]'
+    vault_category: email
+  - placeholder: '[CARD]'
+    vault_category: card
+    description: Credit/debit card number (Luhn-validated)
+  - placeholder: '[IP]'
+    vault_category: ip
+  - placeholder: '[IBAN]'
+    vault_category: iban
+    description: Any IBAN; DE IBANs share the same shape as the universal pattern
+  - placeholder: '[DATE]'
+    vault_category: date
+  - placeholder: '[URL]'
+    vault_category: url
+
+  # — OPF-only (no regex pattern; emitted by the OPF model) —
+  - placeholder: '[PERSON_NAME]'
+    vault_category: person_name
+  - placeholder: '[STREET_ADDRESS]'
+    vault_category: street_address
+  - placeholder: '[SECRET]'
+    vault_category: secret
+  - placeholder: '[LICENSE_PLATE]'
+    vault_category: plate
+  - placeholder: '[VIN]'
+    vault_category: vin
+    description: Fahrzeugidentifikationsnummer / vehicle identification number
+
+# ---- Regex patterns ---------------------------------------------------------
+# Order matters: keyword-anchored before unconditional. `validator` references
+# a callable in the named-validator registry (resolved at load time).
+patterns:
+  # — keyword-anchored (German-specific IDs need context to avoid colliding
+  #   with the many other 11-digit / 10-char numeric IDs in business prose) —
+  - name: de_steuer_id
+    placeholder: '[DE_STEUER_ID]'
+    pattern: '\b\d{2}[\s\-]?\d{3}[\s\-]?\d{3}[\s\-]?\d{3}\b'
+    keyword_anchors:
+      - steuer-id
+      - steuer_id   # JSON-snake_case form returned by tool fixtures
+      - 'steuer id'
+      - idnr
+      - 'idnr.'
+      - steuerliche identifikationsnummer
+      - steueridentifikationsnummer
+      - 'steuer nr'
+      # Cross-language anchors so a DE Steuer-ID embedded in an English
+      # query ("Foreign tax id we received: …") still fires under the
+      # multi-policy regex union.
+      - 'tax id'
+      - 'tax-id'
+      - tax_id
+      - taxnum
+      - 'foreign tax id'
+
+  # de_personalausweis and passportnum share the same structural pattern
+  # (1 letter from the issuer-allowed set + 9 alphanumerics). Previously
+  # we tried to keep them as separate labels with different keyword
+  # anchors, but the patterns are equivalent and the placeholder
+  # `[DE_PERSONALAUSWEIS]` (listed first) always won, making
+  # `[PASSPORTNUM]` unreachable. Merged into a single `personal_id`
+  # pattern with the union of both keyword anchors.
+  - name: personal_id
+    placeholder: '[PERSONAL_ID]'
+    # Require at least one digit so plain words like "Passnummer" or
+    # "Personalausweis" alone don't match (re.IGNORECASE would otherwise allow).
+    pattern: '\b[CFGHJKLMNPRTVWXYZ](?=[0-9A-Z]*\d)[0-9A-Z]{9}\b'
+    keyword_anchors:
+      - personalausweis
+      - ausweisnummer
+      - 'ausweis nr'
+      - 'ausweis-nr'
+      - perso
+      - reisepass
+      - 'reisepass-nr'
+      - 'pass nr'
+      - passport
+      - passnummer
+      - führerschein
+      - fuehrerschein
+      - 'führerschein-nr'
+      - 'führerschein nr'
+      - führerscheinnummer
+      - fahrerlaubnis
+
+  # — unconditional —
+  - name: date
+    placeholder: '[DATE]'
+    pattern: '\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b'
+
+  - name: email
+    placeholder: '[EMAIL]'
+    pattern: '\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b'
+
+  - name: credit_card
+    placeholder: '[CARD]'
+    pattern: '\b(?:\d[ -]*?){13,19}\b'
+    validator: luhn
+    description: Validated against Luhn checksum to filter long-numeric-run false positives
+
+  - name: ip
+    placeholder: '[IP]'
+    pattern: '\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b'
+
+  - name: iban
+    placeholder: '[IBAN]'
+    pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
+
+  - name: url
+    placeholder: '[URL]'
+    pattern: '\bhttps?://[^\s<>"''`]+'
+
+  - name: de_phone_intl
+    placeholder: '[PHONE]'
+    pattern: '(?<!\d)(?:\+(?:49|43|41)|00(?:49|43|41))[\s.\-]?\(?\d{1,5}\)?[\s.\-]?\d{2,8}(?:[\s.\-]?\d{2,8}){0,3}(?!\d)'
+
+  - name: de_phone_local
+    placeholder: '[PHONE]'
+    pattern: '(?<!\d)0\d{2,4}[\s.\-]\d{3,8}(?:[\s.\-]?\d{2,8})?(?!\d)'
+
+  - name: vin
+    placeholder: '[VIN]'
+    # ISO 3779: 17-character VIN. Letters I, O, Q excluded by spec.
+    pattern: '\b[A-HJ-NPR-Z0-9]{17}\b'
+
+  # German Kfz-Kennzeichen: 1-3 letter city code + sep + 1-2 letters +
+  # sep + 1-4 digits (e.g. BI-DS 4953, BO RR2337, A VE 2742, BI-PQ-3441).
+  # Keyword-anchored to `Kennzeichen` / `Nummernschild` / `amtliches
+  # Kennzeichen` and the EN cognate `plate` (cross-language fallback)
+  # so the broad shape doesn't false-positive on random uppercase pairs.
+  - name: de_plate
+    placeholder: '[LICENSE_PLATE]'
+    pattern: '\b[A-ZÄÖÜ]{1,3}[ -][A-Z]{1,2}[ -]?\d{1,4}\b'
+    keyword_anchors:
+      - kennzeichen
+      - nummernschild
+      - 'amtl. kennzeichen'
+      - 'amtliches kennzeichen'
+      - kfz-kennzeichen
+      - plate
+      - 'license plate'

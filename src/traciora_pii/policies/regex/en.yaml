@@ -1,0 +1,145 @@
+# RegexPolicy: English-locale placeholder taxonomy + first-pass regex layer.
+#
+# Universal patterns (email, credit card, IP, IBAN, date of birth) plus
+# US-specific identifiers (SSN, US phone). For other English-speaking
+# locales (UK, AU, CA), author a derivative policy with locale-appropriate
+# patterns and load it via the `detector.regex_policy` config key in
+# traciora.yaml (pointing at the new YAML's filesystem path).
+#
+# OPF/training-only placeholders (PERSON_NAME, STREET_ADDRESS, SECRET,
+# LICENSE_PLATE, VIN) are declared here so non-regex layers and generated
+# datasets use the same vault taxonomy.
+#
+# Pattern ordering matters: keyword-anchored patterns are listed before
+# unconditional ones so contextual matches outrank generic numeric patterns.
+
+name: en
+locale: en
+description: English / US-centric PII regex layer — universal patterns plus US identifiers
+
+vocab_normalization:
+  cyrillic_aware: false
+  lemmatizer: null
+
+# ---- Placeholder taxonomy ---------------------------------------------------
+placeholders:
+  # — emitted by regex patterns —
+  - placeholder: '[EMAIL]'
+    vault_category: email
+  - placeholder: '[CARD]'
+    vault_category: card
+    description: Credit/debit card number (Luhn-validated)
+  - placeholder: '[IP]'
+    vault_category: ip
+  - placeholder: '[PERSONAL_ID]'
+    vault_category: personal_id
+    description: Government-issued personal identifier (passport, driver's license, SSN, Personalausweis). Generic on purpose — these have structurally collision-prone shapes that no fine-tune can fully disambiguate. Domains needing per-type tracking should introduce typed placeholders + retrain.
+  - placeholder: '[PHONE]'
+    vault_category: phone
+  - placeholder: '[DATE]'
+    vault_category: date
+  - placeholder: '[IBAN]'
+    vault_category: iban
+  - placeholder: '[URL]'
+    vault_category: url
+
+  # — OPF-only (no regex pattern; emitted by the OPF model) —
+  - placeholder: '[PERSON_NAME]'
+    vault_category: person_name
+  - placeholder: '[STREET_ADDRESS]'
+    vault_category: street_address
+  - placeholder: '[SECRET]'
+    vault_category: secret
+  - placeholder: '[LICENSE_PLATE]'
+    vault_category: plate
+  - placeholder: '[VIN]'
+    vault_category: vin
+    description: Vehicle identification number
+
+# ---- Regex patterns ---------------------------------------------------------
+patterns:
+  # — keyword-anchored —
+  - name: passportnum
+    placeholder: '[PERSONAL_ID]'
+    pattern: '\b(?:\d{9}|[A-Z]\d{8})\b'
+    keyword_anchors: [passport, 'passport no', 'passport number', 'passport #']
+
+  # — unconditional —
+  - name: date
+    placeholder: '[DATE]'
+    pattern: '\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b'
+
+  - name: email
+    placeholder: '[EMAIL]'
+    pattern: '\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b'
+
+  - name: credit_card
+    placeholder: '[CARD]'
+    pattern: '\b(?:\d[ -]*?){13,19}\b'
+    validator: luhn
+    description: Validated against Luhn checksum to filter long-numeric-run false positives
+
+  - name: ip
+    placeholder: '[IP]'
+    pattern: '\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b'
+
+  - name: us_ssn
+    placeholder: '[PERSONAL_ID]'
+    pattern: '\b(?!000|666|9\d\d)\d{3}-\d{2}-\d{4}\b'
+
+  - name: us_ssn_dashless
+    placeholder: '[PERSONAL_ID]'
+    # Dashless variant. Bare 9-digit runs are too generic, so this fires only
+    # under SSN keyword context. The dashed form above remains unconditional.
+    pattern: '\b(?!000|666|9\d\d)\d{9}\b'
+    keyword_anchors:
+      - ssn
+      - 'social security'
+      - 'social-security-number'
+      - 'social security number'
+      # Generic ID-type anchors. "national id" / "national identifier"
+      # are the surrounding context the eval dataset uses when surfacing
+      # this 9-digit personal-ID shape; without them the regex misses
+      # under `verify the national id 123456789`-style prompts.
+      - 'national id'
+      - 'national-id'
+      - 'national identifier'
+
+  - name: us_phone
+    placeholder: '[PHONE]'
+    # (?<!\d) / (?!\d) prevent matching inside a longer digit run; \b alone
+    # let the 10-digit body match substrings of e.g. 12-digit INNs.
+    pattern: '(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)'
+
+  - name: iban
+    placeholder: '[IBAN]'
+    pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
+
+  - name: url
+    placeholder: '[URL]'
+    pattern: '\bhttps?://[^\s<>"''`]+'
+
+  - name: vin
+    placeholder: '[VIN]'
+    # ISO 3779: 17-character VIN. The letters I, O, Q are excluded to
+    # avoid confusion with digits 1 and 0. Unconditional fire on shape;
+    # FP risk is low because the I/O/Q exclusion + 17-char-exact length
+    # is rare in non-VIN text.
+    pattern: '\b[A-HJ-NPR-Z0-9]{17}\b'
+
+  # US license-plate shape: 3 uppercase letters + optional space/dash +
+  # 3-or-4 digits (e.g. AKD7052, TEC-6935, PER 4295). Keyword-anchored
+  # to `plate` / `tag` / `license plate` so it doesn't fire on every
+  # 3-letter+digit run in free prose. The dataset generator produces
+  # 6 shape variants (state-prefix, state-suffix, plate/tag literal,
+  # dashed) — the keyword anchor + core regex catches the variable
+  # portion across all of them.
+  - name: us_plate
+    placeholder: '[LICENSE_PLATE]'
+    pattern: '\b[A-Z]{3}[ -]?\d{3,4}\b'
+    keyword_anchors:
+      - plate
+      - tag
+      - license plate
+      - 'lp:'
+      - 'lp '

@@ -1,0 +1,94 @@
+================================================================
+traciora_pii — Intended Use and Limitations
+================================================================
+
+Intended use
+----------------------------------------------------------------
+traciora_pii is a research artifact released to support reproduction and
+peer evaluation of an academic paper on PII virtualization for
+LLM tool-calling agents. The expected uses are:
+
+  1. Reproducing the three headline claims in the paper
+     (claims/1/, claims/2/, claims/3/).
+  2. Inspecting the source of the library, evaluation harness,
+     fine-tune recipes, and synthetic-data generator.
+  3. Extending the library or the evaluation suite for follow-on
+     research on detection, virtualization, or agent-side
+     PII handling.
+
+The library is designed to be integrated into LLM-driven agent
+pipelines: it sits between the agent runtime and the model
+provider, anonymizes inbound text, rehydrates tool arguments at
+execution time, and re-anonymizes tool results before they
+re-enter the model context.
+
+Limitations
+----------------------------------------------------------------
+The artifact is a research prototype, not a production-hardened
+privacy product. Notable limitations:
+
+  - Coverage is bounded by the configured detector taxonomy.
+    PII types outside the regex policy and the OPF fine-tune
+    label space (e.g. medical record numbers, biometric
+    templates) are not detected.
+
+  - The OPF fine-tunes target three languages (English, German,
+    Russian). Inputs in other languages fall back to the regex
+    layer + base OPF; coverage is degraded.
+
+  - The leak-guard final-output scanner cannot recover from a
+    detector miss earlier in the pipeline. A missed detection
+    can still result in raw PII being transmitted to the model
+    provider.
+
+  - The evaluation LLM in Claim 3 is queried through OpenRouter
+    at temperature=0; non-determinism in third-party model
+    responses may cause small per-run variation in TSR numbers.
+    Reference outputs under claims/3/expected/ must be supplied locally
+    when comparing against a previous run.
+
+  - Tests and generator inputs use synthetic fixtures. Generated datasets,
+    private records, transcripts, result snapshots, and model outputs are
+    local-only and are not included in Git or distribution packages.
+
+Ethical scope
+----------------------------------------------------------------
+The artifact is intended for defensive use: reducing the
+transmission of personal data from agent runtimes to LLM
+inference providers. It is not intended for, and should not be
+used for:
+
+  - Building censorship or surveillance systems that rely on
+    PII detection for downstream user identification.
+  - Bypassing legal or contractual restrictions on data
+    processing by stripping identifiers from records that must
+    remain attributable for audit, consent, or accountability
+    reasons.
+  - Producing synthetic identity documents or social-engineering
+    payloads. The synthetic-data generator under
+    benchmarks/data_generator/ exists to populate the
+    evaluation benchmark; its outputs use reserved ranges
+    specifically to be useless as forgery material.
+
+Authors expect users of the library to apply jurisdiction-
+appropriate legal review before deploying it in any setting
+that processes real personal data.
+
+Reproducibility caveat
+----------------------------------------------------------------
+The numbers reported in the paper are reproducible to within
+the tolerances stated in each claims/N/claim.txt file. Exact
+bit-for-bit reproduction is not guaranteed because:
+
+  - Third-party LLM endpoints (OpenRouter-routed providers)
+    may update their served models over time.
+  - HuggingFace cache reuse can shift first-run wall-clock
+    times.
+  - Bootstrap confidence intervals are seeded (seed=42, 1000
+    resamples) and are deterministic given identical input
+    data, but recompose from per-run JSON atoms rather than
+    re-running the full benchmark.
+
+Reference outputs in claims/N/expected/ are local-only. They are not
+included in fresh clones; supply an appropriate reference snapshot locally
+when assessing a historical comparison.

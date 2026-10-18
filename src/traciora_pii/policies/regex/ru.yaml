@@ -1,0 +1,167 @@
+# RegexPolicy: Russian-locale placeholder taxonomy + first-pass regex layer.
+#
+# This file is the source of truth for `placeholder -> vault_category`.
+# Every placeholder any detector layer (regex, OPF, future) emits must be
+# declared here. OPF policies layer on top by mapping their model labels to
+# placeholders declared in `placeholders` below.
+#
+# Pattern ordering matters: when overlapping spans match, the first-listed
+# pattern wins after merging. Keyword-anchored patterns are listed before
+# unconditional ones so contextual matches (e.g. an OGRN that requires
+# `огрн` nearby) outrank generic numeric patterns like `credit_card`.
+
+name: ru
+locale: ru
+description: Russian PII regex layer — government IDs, contacts, payment, vehicle docs
+
+vocab_normalization:
+  cyrillic_aware: true
+  lemmatizer: pymorphy3
+
+# ---- Placeholder taxonomy ---------------------------------------------------
+# Declare every placeholder the system can emit, with its canonical
+# vault_category. Pattern-less placeholders (e.g. PERSON_NAME, STREET_ADDRESS,
+# vehicle/driver docs) are valid: they're emitted by the OPF layer only and
+# need a taxonomy entry so the vault knows their category.
+placeholders:
+  # — emitted by regex patterns —
+  - placeholder: '[PERSONAL_ID]'
+    vault_category: personal_id
+    description: Government-issued personal identifier (passport, driver's license, SSN, Personalausweis). Generic on purpose — the structurally identical shapes (e.g. RU passport vs. driver's license both XX YY ZZZZZZ) cannot be reliably disambiguated at the model layer. Domains needing per-type tracking should introduce typed placeholders + retrain.
+  - placeholder: '[RU_SNILS]'
+    vault_category: snils
+    description: Russian SNILS pension insurance number
+  - placeholder: '[RU_OGRN]'
+    vault_category: ogrn
+    description: Russian OGRN/OGRNIP legal-entity registration number
+  - placeholder: '[RU_BANK_ACCOUNT]'
+    vault_category: bank_acct
+    description: Russian 20-digit bank account number
+  - placeholder: '[RU_KPP]'
+    vault_category: kpp
+    description: Russian KPP tax registration reason code
+  - placeholder: '[RU_INN]'
+    vault_category: inn
+    description: Russian INN taxpayer identification number
+  - placeholder: '[DATE]'
+    vault_category: date
+  - placeholder: '[EMAIL]'
+    vault_category: email
+  - placeholder: '[CARD]'
+    vault_category: card
+    description: Credit/debit card number (Luhn-validated)
+  - placeholder: '[IP]'
+    vault_category: ip
+  - placeholder: '[PHONE]'
+    vault_category: phone
+    description: Phone number (RU mobile/landline; US/intl form also accepted via shared pattern)
+  - placeholder: '[LICENSE_PLATE]'
+    vault_category: plate
+  - placeholder: '[IBAN]'
+    vault_category: iban
+  - placeholder: '[URL]'
+    vault_category: url
+
+  # — OPF-only (no regex pattern; emitted by the fine-tuned model) —
+  - placeholder: '[PERSON_NAME]'
+    vault_category: person_name
+  - placeholder: '[STREET_ADDRESS]'
+    vault_category: street_address
+  - placeholder: '[SECRET]'
+    vault_category: secret
+  - placeholder: '[VIN]'
+    vault_category: vin
+  - placeholder: '[RU_STS]'
+    vault_category: sts
+  - placeholder: '[RU_OSAGO]'
+    vault_category: osago
+
+# ---- Regex patterns ---------------------------------------------------------
+# Order matters; see header. `validator` references a callable in the
+# named-validator registry (resolved at load time).
+patterns:
+  # — keyword-anchored —
+  - name: passportnum
+    placeholder: '[PERSONAL_ID]'
+    pattern: '\b\d{2}\s?\d{2}\s*(?:№|N|#)?\s*\d{6}\b'
+    keyword_anchors: [паспорт, серия, выдан]
+
+  - name: ru_snils
+    placeholder: '[RU_SNILS]'
+    pattern: '\b\d{3}[-\s]\d{3}[-\s]\d{3}\s\d{2}\b'
+    keyword_anchors: [снилс, страховой]
+
+  - name: ru_ogrn
+    placeholder: '[RU_OGRN]'
+    pattern: '\b\d{13}(?:\d{2})?\b'
+    keyword_anchors: [огрн, огрнип]
+
+  - name: ru_bank_account
+    placeholder: '[RU_BANK_ACCOUNT]'
+    pattern: '\b\d{20}\b'
+    keyword_anchors: [р/с, расчет, расчёт, счет, счёт, account]
+
+  - name: ru_kpp
+    placeholder: '[RU_KPP]'
+    pattern: '\b\d{9}\b'
+    keyword_anchors: [кпп]
+
+  # — unconditional —
+  - name: date
+    placeholder: '[DATE]'
+    pattern: '\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b'
+
+  - name: email
+    placeholder: '[EMAIL]'
+    pattern: '\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b'
+
+  - name: credit_card
+    placeholder: '[CARD]'
+    pattern: '\b(?:\d[ -]*?){13,19}\b'
+    validator: luhn
+    description: Validated against Luhn checksum to filter long-numeric-run false positives
+
+  - name: ip
+    placeholder: '[IP]'
+    pattern: '\b(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}\b'
+
+  # ru_phone listed first so it wins on overlap with the broader us_phone
+  # pattern (the merger keeps the placeholder of the first-listed match).
+  - name: ru_phone
+    placeholder: '[PHONE]'
+    pattern: '(?<!\d)(?:\+7|8)[\s.\-]?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{2}[\s.\-]?\d{2}(?!\d)'
+
+  - name: ru_landline
+    placeholder: '[PHONE]'
+    # Area: 3-4 digits (cities + small towns). Body: exactly 6 digits.
+    # Previous pattern allowed 5-digit areas + optional 7th body digit,
+    # which made the total post-prefix grow to 11-12 digits — letting
+    # 12-digit INN-shaped strings (e.g. 841054176183) match as PHONE.
+    pattern: '(?<!\d)(?:\+7|8)[\s.\-]?\(?[3-9]\d{2,3}\)?[\s.\-]?\d[\s.\-]?\d[\s.\-]?\d[\s.\-]?\d[\s.\-]?\d[\s.\-]?\d(?!\d)'
+
+  - name: us_phone
+    placeholder: '[PHONE]'
+    # (?<!\d) / (?!\d) prevent matching inside a longer digit run; \b alone
+    # let the 10-digit body match substrings of e.g. 12-digit INNs.
+    pattern: '(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)'
+
+  - name: ru_inn
+    placeholder: '[RU_INN]'
+    pattern: '\b(?:инн|inn)\s*:?\s*\d{10,12}\b'
+
+  - name: ru_license_plate
+    placeholder: '[LICENSE_PLATE]'
+    pattern: '[АВЕКМНОРСТУХавекмнорстух]\s?\d{3}\s?[АВЕКМНОРСТУХавекмнорстух]{2}(?:\s?\d{2,3}(?:\s?(?:RUS|rus|Rus))?)?'
+
+  - name: iban
+    placeholder: '[IBAN]'
+    pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
+
+  - name: url
+    placeholder: '[URL]'
+    pattern: '\bhttps?://[^\s<>"''`]+'
+
+  - name: vin
+    placeholder: '[VIN]'
+    # ISO 3779: 17-character VIN. Letters I, O, Q excluded by spec.
+    pattern: '\b[A-HJ-NPR-Z0-9]{17}\b'

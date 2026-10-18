@@ -1,0 +1,434 @@
+# Multi-turn scenarios.
+#
+# Two patterns:
+#   - lookup → detail-question: model looks up a record on turn 0 and
+#     answers a follow-up about another field on turn 1 (no second tool
+#     call needed; tests leak-guard fidelity on tool-result PII).
+#   - cross-turn-taint: tool returns NEW PII on turn 0; model is asked
+#     to use that PII as input to a tool on turn 1+ (tests rehydration
+#     and vault-token stability across turns).
+
+# ----------------------------------------------------------------------
+# Lookup → detail-question (no extra tool call) — 8
+# ----------------------------------------------------------------------
+- scenario_id: scn-mt-101
+  bucket: multi_turn
+  workflow: lookup_phone_then_email
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_email}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mt-102
+  bucket: multi_turn
+  workflow: lookup_email_then_phone
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+    - "{{intent_followup_phone}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-mt-103
+  bucket: multi_turn
+  workflow: lookup_phone_then_address
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_address}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mt-104
+  bucket: multi_turn
+  workflow: lookup_email_then_tier
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+    - "{{intent_followup_tier}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-mt-105
+  bucket: multi_turn
+  workflow: lookup_name_then_phone
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}."
+    - "{{intent_followup_phone}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+# 3-turn: lookup → email → address (exercises leak guard across more turns)
+- scenario_id: scn-mt-106
+  bucket: multi_turn
+  workflow: lookup_phone_then_email_then_address
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_email}}"
+    - "{{intent_followup_address}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+# ----------------------------------------------------------------------
+# Cross-turn-taint: tool result injects NEW email; turn 1 references it
+# in an update_contact call. (4 scenarios — one per injected PII type.)
+# ----------------------------------------------------------------------
+- scenario_id: scn-mt-201
+  bucket: multi_turn
+  workflow: cross_turn_taint_email_to_update_contact
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_email}}"
+    - "{{intent_update_contact_email}} {INJECTED_EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: update_contact
+      arguments:
+        record_id: "<record:customer_phone.record_id>"
+        email: "{INJECTED_EMAIL}"
+      record_key: customer_phone
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[EMAIL]"
+      from_record_field: email
+      slot_name: EMAIL
+      must_appear_in_turn: 1
+
+- scenario_id: scn-mt-202
+  bucket: multi_turn
+  workflow: cross_turn_taint_phone_to_update_contact
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}. {{intent_followup_phone}}"
+    - "{{intent_update_contact_phone}} {INJECTED_PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+    - turn_index: 1
+      tool_name: update_contact
+      arguments:
+        record_id: "<record:customer_email.record_id>"
+        phone: "{INJECTED_PHONE}"
+      record_key: customer_email
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[PHONE]"
+      from_record_field: phone
+      slot_name: PHONE
+      must_appear_in_turn: 1
+
+- scenario_id: scn-mt-203
+  bucket: multi_turn
+  workflow: cross_turn_taint_email_to_ticket_update
+  turns_per_locale:
+    en:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_email}}"
+      - "{{intent_update_ticket_status}} {TICKET_ID} — set the owner email to {INJECTED_EMAIL}."
+    de:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_email}}"
+      - "{{intent_update_ticket_status}} {TICKET_ID} — setze die Eigentümer-E-Mail auf {INJECTED_EMAIL}."
+    ru:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_email}}"
+      - "{{intent_update_ticket_status}} {TICKET_ID} — установи email владельца как {INJECTED_EMAIL}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: update_ticket
+      arguments:
+        ticket_id: "{TICKET_ID}"
+      record_key: ticket
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[EMAIL]"
+      from_record_field: email
+      slot_name: EMAIL
+      must_appear_in_turn: 1
+  # Opaque per-locale ticket IDs — the user-visible string stays clean
+  # (no "-en"/"-de"/"-ru" suffix leaking the locale), while the
+  # underlying fixture keys still uniquify across the EN/DE/RU triplet
+  # so the shared _TICKETS store doesn't collide.
+  literal_slots_per_locale:
+    en:
+      TICKET_ID: "TCK-7042"
+    de:
+      TICKET_ID: "TCK-7043"
+    ru:
+      TICKET_ID: "TCK-7044"
+
+- scenario_id: scn-mt-204
+  bucket: multi_turn
+  workflow: cross_turn_taint_phone_to_appointment_reschedule
+  turns_per_locale:
+    en:
+      - "{{intent_lookup_email}} {EMAIL}. {{intent_followup_phone}}"
+      - "{{intent_reschedule_appointment}} {INJECTED_PHONE} to 2026-08-20 14:00."
+    de:
+      - "{{intent_lookup_email}} {EMAIL}. {{intent_followup_phone}}"
+      - "{{intent_reschedule_appointment}} {INJECTED_PHONE} auf 2026-08-20 14:00."
+    ru:
+      - "{{intent_lookup_email}} {EMAIL}. {{intent_followup_phone}}"
+      - "{{intent_reschedule_appointment}} {INJECTED_PHONE} на 2026-08-20 14:00."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+    - turn_index: 1
+      tool_name: appointment_reschedule_by_phone
+      arguments:
+        phone: "{INJECTED_PHONE}"
+        new_slot: "2026-08-20 14:00"
+      record_key: appointment
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[PHONE]"
+      from_record_field: phone
+      slot_name: PHONE
+      must_appear_in_turn: 1
+
+# ----------------------------------------------------------------------
+# Additional multi-turn variants (12) — phrasing diversity + extra
+# detail-question and cross-turn-taint cases.
+# ----------------------------------------------------------------------
+- scenario_id: scn-mt-110
+  bucket: multi_turn
+  workflow: lookup_phone_then_email
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_email}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mt-111
+  bucket: multi_turn
+  workflow: lookup_email_then_address
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+    - "{{intent_followup_address}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+- scenario_id: scn-mt-112
+  bucket: multi_turn
+  workflow: lookup_phone_then_tier
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_tier}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mt-113
+  bucket: multi_turn
+  workflow: lookup_phone_then_card_last4
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_card_last4}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+
+- scenario_id: scn-mt-114
+  bucket: multi_turn
+  workflow: lookup_name_then_email
+  turns:
+    - "{{intent_lookup_name}} {PERSON_NAME}."
+    - "{{intent_followup_email}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_name
+      arguments: { name: "{PERSON_NAME}" }
+      record_key: customer_name
+
+# Three-turn detail walk
+- scenario_id: scn-mt-115
+  bucket: multi_turn
+  workflow: lookup_email_then_phone_then_tier
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}."
+    - "{{intent_followup_phone}}"
+    - "{{intent_followup_tier}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+
+# Multi-turn update_contact with a *new* address — renamed from the
+# original "cross-turn-taint" archetype after the §3 evaluation
+# surfaced a test-design bug: the turn-2 confirm-address was injected
+# from the fixture's own address field, making turn-2 == fixture and
+# turning update_contact into a semantic no-op that every model
+# (correctly) skipped. The current shape uses a freshly-drawn
+# {STREET_ADDRESS} (distinct from the fixture's prior draw) and an
+# explicit "update" intent so the test exercises the path it names.
+- scenario_id: scn-mt-205
+  bucket: multi_turn
+  workflow: update_contact_address_change
+  turns_per_locale:
+    en:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_address}}"
+      - "Update their address to {STREET_ADDRESS} on that contact."
+    de:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_address}}"
+      - "Aktualisiere ihre Adresse zu {STREET_ADDRESS} bei diesem Kontakt."
+    ru:
+      - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_address}}"
+      - "Обнови адрес на {STREET_ADDRESS} в карточке этого контакта."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: update_contact
+      arguments:
+        record_id: "<record:customer_phone.record_id>"
+      record_key: customer_phone
+
+# Cross-turn-taint: extra email-injection variant
+- scenario_id: scn-mt-206
+  bucket: multi_turn
+  workflow: cross_turn_taint_email_to_update_contact_v2
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}. {{intent_followup_email}}"
+    - "{{intent_update_contact_email}} {INJECTED_EMAIL}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: update_contact
+      arguments:
+        record_id: "<record:customer_phone.record_id>"
+        email: "{INJECTED_EMAIL}"
+      record_key: customer_phone
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[EMAIL]"
+      from_record_field: email
+      slot_name: EMAIL
+      must_appear_in_turn: 1
+
+# Cross-turn-taint: extra phone-injection variant
+- scenario_id: scn-mt-207
+  bucket: multi_turn
+  workflow: cross_turn_taint_phone_to_update_contact_v2
+  turns:
+    - "{{intent_lookup_email}} {EMAIL}. {{intent_followup_phone}}"
+    - "{{intent_update_contact_phone}} {INJECTED_PHONE}{{intent_please_lookup}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_email
+      arguments: { email: "{EMAIL}" }
+      record_key: customer_email
+    - turn_index: 1
+      tool_name: update_contact
+      arguments:
+        record_id: "<record:customer_email.record_id>"
+        phone: "{INJECTED_PHONE}"
+      record_key: customer_email
+  injected_pii:
+    - producing_call_index: 0
+      turn_index: 1
+      placeholder: "[PHONE]"
+      from_record_field: phone
+      slot_name: PHONE
+      must_appear_in_turn: 1
+
+# Cross-turn: lookup → cancel using same phone (no injection — model
+# must keep the same vault token for the phone across turns)
+- scenario_id: scn-mt-208
+  bucket: multi_turn
+  workflow: lookup_then_cancel_same_phone
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_cancel_appointment}} {PHONE}."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: appointment_cancel_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: appointment
+
+# Cross-turn: lookup → reschedule using same phone
+- scenario_id: scn-mt-209
+  bucket: multi_turn
+  workflow: lookup_then_reschedule_same_phone
+  turns_per_locale:
+    en:
+      - "{{intent_lookup_phone}} {PHONE}."
+      - "{{intent_reschedule_appointment}} {PHONE} to 2026-10-15 11:00."
+    de:
+      - "{{intent_lookup_phone}} {PHONE}."
+      - "{{intent_reschedule_appointment}} {PHONE} auf 2026-10-15 11:00."
+    ru:
+      - "{{intent_lookup_phone}} {PHONE}."
+      - "{{intent_reschedule_appointment}} {PHONE} на 2026-10-15 11:00."
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone
+    - turn_index: 1
+      tool_name: appointment_reschedule_by_phone
+      arguments:
+        phone: "{PHONE}"
+        new_slot: "2026-10-15 11:00"
+      record_key: appointment
+
+# Three-turn lookup → email → address (extended leak-guard surface)
+- scenario_id: scn-mt-210
+  bucket: multi_turn
+  workflow: lookup_phone_three_turn_walk
+  turns:
+    - "{{intent_lookup_phone}} {PHONE}."
+    - "{{intent_followup_email}}"
+    - "{{intent_followup_address}}"
+  expected_tool_calls:
+    - turn_index: 0
+      tool_name: customer_lookup_by_phone
+      arguments: { phone: "{PHONE}" }
+      record_key: customer_phone

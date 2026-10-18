@@ -1,0 +1,77 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "traciora-pii"
+version = "0.1.0"
+description = "Reversible PII virtualization for LLM tool-calling agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Anonymous Submission" }]
+dependencies = [
+  "cryptography>=42.0.0",
+  "pydantic>=2.5.0",
+  "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+llm = [
+  "httpx>=0.27.0",
+  "pymorphy3",
+]
+opf = [
+  "pymorphy3",
+  "opf @ git+https://github.com/openai/privacy-filter.git@f7f00ca7fb869683eb732c010299d901457f19c3",
+]
+presidio = [
+  "presidio-analyzer>=2.2.0",
+  "presidio-anonymizer>=2.2.0",
+  "spacy>=3.7.0",
+]
+benchmarks = [
+  "langchain-core>=0.3.0",
+  "langchain-openai>=0.2.0",
+  "python-dotenv>=1.0.0",
+  "datasets>=2.14",
+]
+opf-finetune = [
+  "opf @ git+https://github.com/openai/privacy-filter.git@f7f00ca7fb869683eb732c010299d901457f19c3",
+  "torch>=2.1",
+  "bitsandbytes>=0.43; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+dev = [
+  "pytest>=7.4.0",
+  "httpx>=0.27.0",
+  "langchain-core>=0.3.0",
+  "langchain-openai>=0.2.0",
+  "python-dotenv>=1.0.0",
+  "datasets>=2.14",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src", "benchmarks" = "benchmarks", "fine_tuning" = "fine_tuning"}
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["traciora_pii*", "benchmarks*", "fine_tuning*"]
+exclude = ["benchmarks.pii_evaluation.results*", "benchmarks.pii_evaluation.dataset.data*", "benchmarks.data_import.reports*", "benchmarks.data_import.cache*", "fine_tuning.data*", "fine_tuning.runs*"]
+
+[tool.setuptools.package-data]
+"traciora_pii.policies.regex" = ["*.yaml"]
+"traciora_pii.policies.opf" = ["*.yaml"]
+"benchmarks.data_generator" = ["seeds/*/*.yaml"]
+"benchmarks.pii_evaluation.dataset" = ["scenarios/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = [
+  "tests",                              # library tests (src/traciora_pii/) — production-relevant
+  "benchmarks/data_generator/tests",    # synthetic-data generator
+  "benchmarks/pii_evaluation/tests",    # eval harness, metrics, bootstrap
+  "fine_tuning/tests",                  # label-space + data-prep pipeline
+]
+pythonpath = ["src"]
+markers = [
+  "integration: requires optional extras (e.g. presidio + spaCy models). Skip by default.",
+]

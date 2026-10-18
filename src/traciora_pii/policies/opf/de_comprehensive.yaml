@@ -1,0 +1,44 @@
+# OPFPolicy: comprehensive label map for the German fine-tuned OPF model.
+#
+# Layered on top of `regex/de.yaml`; every placeholder referenced in
+# `label_map` must be declared in that regex policy's `placeholders` list.
+#
+# PERSONAL_ID is a deliberately generic placeholder covering government-
+# issued personal identifiers (passport, driver's license, SSN,
+# Personalausweis). These have structurally collision-prone shapes that
+# no fine-tune can fully disambiguate. Domains needing per-type tracking
+# can introduce typed placeholders here and retrain the second-pass
+# model on labeled data for that vocabulary — the framework supports
+# arbitrary label spaces.
+
+name: de_comprehensive
+locale: de
+description: Comprehensive label map for the German fine-tuned model (PERSONAL_ID consolidation)
+
+# Native OPF labels intentionally dropped:
+#   private_date  — the regex layer applies stricter context anchors;
+#                   the bare OPF date label has too many FPs.
+#   private_url   — URLs are not PII; tokenizing them mangles tool args.
+label_map:
+  # Generic / contextual
+  private_person:      '[PERSON_NAME]'
+  private_address:     '[STREET_ADDRESS]'
+  private_email:       '[EMAIL]'
+  private_phone:       '[PHONE]'
+  secret:              '[SECRET]'
+
+  # Generic government-issued personal identifier. Covers Personalausweis
+  # and passport — both share the [CFGHJKLMNPRTVWXYZ][0-9A-Z]{9} shape
+  # so the previous separate labels were structurally unreachable.
+  personal_id:         '[PERSONAL_ID]'
+
+  # German-specific tax ID (distinct shape: 11 digits in 2-3-3-3 grouping)
+  de_steuer_id:        '[DE_STEUER_ID]'
+
+  # Structured identifiers (also caught by regex; fine-tune adds
+  # contextual recall when keyword anchors are absent)
+  payment_card:        '[CARD]'
+  iban:                '[IBAN]'
+  ip_address:          '[IP]'
+  vehicle_plate:       '[LICENSE_PLATE]'
+  vin:                 '[VIN]'

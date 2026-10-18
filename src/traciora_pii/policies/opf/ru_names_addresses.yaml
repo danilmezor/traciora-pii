@@ -1,0 +1,13 @@
+# OPFPolicy: minimal label map for the bundled Russian fine-tuned OPF model.
+# Used for ablation runs that isolate names+addresses detection performance
+# (e.g. comparing to the base OPF model, which is also names+addresses only).
+#
+# Loaded only when OPF is enabled. Layered on top of `regex/ru.yaml`.
+
+name: ru_names_addresses
+locale: ru
+description: Minimal OPF map — names and addresses only (ablation runs)
+
+label_map:
+  private_person:  '[PERSON_NAME]'
+  private_address: '[STREET_ADDRESS]'
