@@ -124,3 +124,6 @@ The package's `scrub` is regex-only and uses a separate logging policy, includin
 long-number masking. Conversational category exclusions do not weaken logging.
 Historical core token formats are not supported by this release; consumers must
 start fresh contexts and vault storage when migrating.
+
+Version 0.2.1 buffers every possible token prefix, including one-character
+chunks, so streaming rehydration does not depend on provider chunk sizes.

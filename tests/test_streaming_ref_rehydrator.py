@@ -45,15 +45,11 @@ def _drain(rehydrator: StreamingRefRehydrator, full_text: str, *, chunk_size: in
     return "".join(out)
 
 
-@pytest.mark.parametrize("chunk_size", [7, 11, 23, 31, 64])
+@pytest.mark.parametrize("chunk_size", [1, 2, 3, 4, 7, 11, 23, 31, 64])
 def test_chunked_feed_equals_full_rehydrate(virtualizer, scope, chunk_size):
     """Concatenated streaming output must equal one-shot rehydrate for any chunk size.
 
-    The rehydrator's partial-prefix regex requires at least the shortest
-    keyword head (``pho``, 3 chars) to be present in the buffer at the
-    moment a feed lands; smaller chunks would emit a token's prefix
-    before the buffer can reassemble it. SSE/WebSocket chunks are
-    typically 5+ chars, so 7 is the smallest realistic boundary.
+    Providers may deliver a single character at a time; every boundary is valid.
     """
     anon = virtualizer.anonymize_text(scope, "Call +79128565950 please")
     full = f"Customer phone is {anon}, please call back."
@@ -66,21 +62,30 @@ def test_chunked_feed_equals_full_rehydrate(virtualizer, scope, chunk_size):
     assert "phone_ref:" not in streamed
 
 
-def test_character_at_a_time_falls_through_documented_limitation(virtualizer, scope):
-    """At chunk_size=1 the rehydrator cannot reassemble ref tokens — documented limitation.
-
-    Each single-char feed empties the buffer because the partial-prefix
-    regex needs ≥3 chars to engage. Production streaming clients use
-    chunks of dozens-to-hundreds of characters, so this is a known
-    corner that the implementation does not promise to handle.
-    """
+def test_character_at_a_time_rehydrates_without_exposing_refs(virtualizer, scope):
     anon = virtualizer.anonymize_text(scope, "+79128565950")
     full = f"Phone is {anon} now."
-    rehydrator = StreamingRefRehydrator(virtualizer, scope)
-    streamed = _drain(rehydrator, full, chunk_size=1)
-    # The ref token leaks through unrehydrated — recording the contract.
-    assert "phone_ref:" in streamed
-    assert "+79128565950" not in streamed
+    streamed = _drain(StreamingRefRehydrator(virtualizer, scope), full, chunk_size=1)
+    assert streamed == "Phone is +79128565950 now."
+    assert "phone_ref:" not in streamed
+
+
+@pytest.mark.parametrize("category", [
+    "phone", "email", "card", "ip", "url", "personal_id", "inn", "snils",
+    "ogrn", "bank_acct", "kpp", "date", "plate", "iban", "secret",
+    "person_name", "street_address", "vin", "sts", "osago", "steuer_id",
+])
+def test_every_category_rehydrates_at_every_split(vault, virtualizer, scope, category):
+    from traciora_pii.policies.loader import load_multi_regex_policy
+    policy = load_multi_regex_policy(["en", "de", "ru"])
+    placeholder = next(p.placeholder for p in policy.placeholders if p.vault_category.value == category)
+    value = f"synthetic value for {category}"
+    ref = vault.get_or_create_token(scope, placeholder, value)
+    for split in range(1, len(ref)):
+        stream = StreamingRefRehydrator(virtualizer, scope)
+        result = stream.feed("Before " + ref[:split]) + stream.feed(ref[split:] + " after.") + stream.flush()
+        assert result == f"Before {value} after.", (category, split)
+    assert _drain(StreamingRefRehydrator(virtualizer, scope), ref, chunk_size=1) == value
 
 
 def test_split_inside_ref_token_holds_back_emission(virtualizer, scope):

@@ -14,16 +14,15 @@ A built-in name resolves to a YAML file shipped inside the package
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from importlib.resources import files
 from pathlib import Path
-from collections.abc import Sequence
 
 import yaml
 
 from ..pii import PIIDetector
 from . import validators
 from .schemas import OPFPolicy, RegexPolicy, validate_opf_against_regex
-
 
 _REGEX_FLAGS = re.IGNORECASE | re.UNICODE
 _BUILTIN_REGEX_PKG = "traciora_pii.policies.regex"
@@ -131,7 +130,7 @@ def load_multi_regex_policy(names_or_paths: Sequence[str]) -> RegexPolicy:
             seen_placeholders.add(ph.placeholder)
             merged_placeholders.append(ph)
 
-    base_name, base_policy = loaded[0]
+    _base_name, base_policy = loaded[0]
     merged_dict = base_policy.model_dump()
     merged_dict["name"] = "+".join(name for name, _ in loaded)
     merged_dict["description"] = "Merged: " + " + ".join(name for name, _ in loaded)
@@ -217,12 +216,11 @@ def build_partial_ref_token_pattern(policy: RegexPolicy) -> re.Pattern:
     # Proper prefixes of category names — for chunks that split inside a
     # category name itself (e.g. buffer ends with `pho` and the next chunk
     # delivers `ne_ref:...`). Sorted longest-first so the regex tries the
-    # most specific prefix first. Minimum length 3 to avoid spurious
-    # single/double-char holdbacks on common English letters (matches the
-    # old hand-maintained pattern's heuristic — see git blame). Categories
-    # of length < 3 (e.g. `ip`) are still caught by the full-name branch.
+    # most specific prefix first. Include even single-letter prefixes: SSE
+    # and provider token streams may split at any character. Holding a short
+    # ordinary suffix until the next chunk is preferable to leaking a ref.
     proper_prefixes = sorted(
-        {cat[:i] for cat in categories for i in range(3, len(cat))},
+        {cat[:i] for cat in categories for i in range(1, len(cat))},
         key=len,
         reverse=True,
     )
@@ -236,13 +234,13 @@ def cross_validate(opf: OPFPolicy, regex: RegexPolicy) -> None:
 
 
 __all__ = [
-    "load_regex_policy",
-    "load_multi_regex_policy",
-    "load_opf_policy",
-    "compile_regex_policy",
-    "compile_multi_regex_policy",
+    "build_partial_ref_token_pattern",
     "build_placeholder_to_prefix",
     "build_ref_token_pattern",
-    "build_partial_ref_token_pattern",
+    "compile_multi_regex_policy",
+    "compile_regex_policy",
     "cross_validate",
+    "load_multi_regex_policy",
+    "load_opf_policy",
+    "load_regex_policy",
 ]
