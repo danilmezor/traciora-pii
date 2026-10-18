@@ -7,7 +7,11 @@ preventing the call from proceeding.
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+
+if TYPE_CHECKING:
+    from .config import PIIConfig
 
 from .pii import detect_pii
 from .pii_vault import PIIVaultStore
@@ -40,17 +44,19 @@ def _is_enabled() -> bool:
     return get_config().detector.leak_guard_enabled
 
 
-def _extract_strings(payload: Any) -> list[str]:
+def extract_strings(payload: Any, skip_block: Callable[[Any], bool] | None = None) -> list[str]:
     """Recursively collect all string values from a nested payload."""
     strings: list[str] = []
+    if skip_block is not None and skip_block(payload):
+        return strings
     if isinstance(payload, str):
         strings.append(payload)
     elif isinstance(payload, dict):
         for v in payload.values():
-            strings.extend(_extract_strings(v))
+            strings.extend(extract_strings(v, skip_block))
     elif isinstance(payload, (list, tuple)):
         for item in payload:
-            strings.extend(_extract_strings(item))
+            strings.extend(extract_strings(item, skip_block))
     return strings
 
 
@@ -58,6 +64,9 @@ def assert_model_safe(
     payload: Any,
     session_scope_key: str,
     vault: PIIVaultStore,
+    *,
+    config: "PIIConfig | None" = None,
+    skip_block: Callable[[Any], bool] | None = None,
 ) -> None:
     """Check that *payload* contains no raw PII that has a vault token.
 
@@ -65,7 +74,7 @@ def assert_model_safe(
     session — random digit sequences that happen to match PII patterns
     but aren't in the vault are ignored.
     """
-    if not _is_enabled():
+    if not (config.detector.leak_guard_enabled if config is not None else _is_enabled()):
         return
 
     all_tokens = vault.resolve_all_tokens(session_scope_key)
@@ -74,10 +83,10 @@ def assert_model_safe(
 
     raw_values = set(all_tokens.values())
 
-    for text in _extract_strings(payload):
+    for text in extract_strings(payload, skip_block):
         if not text:
             continue
-        findings = detect_pii(text)
+        findings = detect_pii(text, config=config)
         for finding in findings:
             raw_span = text[finding.start:finding.end]
             # Only flag if the raw value is actually tracked in the vault

@@ -97,3 +97,30 @@ The Git history starts from the cleaned source tree. Personal data and prior
 result snapshots are excluded from that initial commit. Keep generated outputs
 local, and inspect staged files before committing. History replacement cannot
 erase copies in other clones, forks, or hosting-provider caches.
+
+## Embedding Traciora core
+
+Use `traciora_pii.runtime.traciora_config(language)` with `en`, `de`, or `ru`.
+It selects that language's packaged regex policy and fine-tuned OPF registry
+entry and excludes URLs. It reads no environment or checkout YAML, so it works
+from an installed wheel and does not interpret the core application's switches.
+Pass the resulting configuration explicitly to `PIIVirtualizer`,
+`PIIRedactor.from_config`, `detect_pii`, `redact_pii_text`, and `assert_model_safe`.
+Explicit per-call category exclusions override those on the configuration.
+
+For attachments, pass the application's text-mapping function as `map_text`
+to `PIIVirtualizer`; `anonymize_content` and `rehydrate_content` then preserve
+the application's block schema. Pass its binary-block predicate as `skip_block`
+to `assert_model_safe`. The package never inspects image contents.
+
+`prepare_opf(config)` downloads and validates only the selected checkpoint at
+startup. `get_shared_second_pass(config)` opens only a prepared local checkpoint,
+serializes inference, and reuses one detector across session virtualizers. A
+model/configuration change requires a process restart. If initialization fails,
+regex-only fallback is logged and cached until restart. Session owners close
+their own vaults; only process shutdown closes the shared detector.
+
+The package's `scrub` is regex-only and uses a separate logging policy, including
+long-number masking. Conversational category exclusions do not weaken logging.
+Historical core token formats are not supported by this release; consumers must
+start fresh contexts and vault storage when migrating.

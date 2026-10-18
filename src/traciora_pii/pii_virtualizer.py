@@ -4,7 +4,7 @@ and rehydrate them back to real values.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 import unicodedata
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -60,9 +60,16 @@ class PIIVirtualizer:
         *,
         second_pass_detector: _SecondPassDetector | None = None,
         excluded_categories: Iterable[str] | None = None,
+        config: "PIIConfig | None" = None,
+        map_text: Callable[[Any, Callable[[str], str]], Any] | None = None,
     ):
         from ._masking_policy import resolve_exclusions
-        self._excluded_categories = resolve_exclusions(excluded_categories)
+        self._config = config
+        self._map_text = map_text
+        self._excluded_categories = resolve_exclusions(
+            config.detector.excluded_categories
+            if config is not None and excluded_categories is None else excluded_categories
+        )
         self._vault = vault
         self._second_pass = second_pass_detector
 
@@ -81,7 +88,7 @@ class PIIVirtualizer:
             return text
 
         text = _normalize_input(text)
-        findings = detect_pii(text, excluded_categories=self._excluded_categories)
+        findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
         merged = _merge_findings(findings) if findings else []
 
         # Build result from right to left to preserve offsets
@@ -183,6 +190,14 @@ class PIIVirtualizer:
     def rehydrate_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively rehydrate ref tokens in dicts, lists, and strings."""
         return self._walk(payload, lambda s: self.rehydrate_text(session_scope_key, s))
+
+    def anonymize_content(self, session_scope_key: str, content: Any) -> Any:
+        mapper = self._map_text or self._walk
+        return mapper(content, lambda text: self.anonymize_text(session_scope_key, text))
+
+    def rehydrate_content(self, session_scope_key: str, content: Any) -> Any:
+        mapper = self._map_text or self._walk
+        return mapper(content, lambda text: self.rehydrate_text(session_scope_key, text))
 
     # ------------------------------------------------------------------
     # Internal

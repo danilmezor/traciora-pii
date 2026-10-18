@@ -21,22 +21,16 @@ class RedactionResult:
 
 
 class PIIRedactor:
-    """Destructive redactor: regex-only PII masking for the legacy
-    benchmark baseline. The framework's preferred path is reversible
-    virtualization (see :class:`PIIVirtualizer`); this redactor exists
-    only so the eval harness can report a "destructive baseline" pipeline
-    alongside virtualization.
+    """Regex-only destructive redaction for applications and benchmarks."""
 
-    LLM-based redaction now lives at the architecturally correct layer —
-    the regex-then-LLM second-pass detector (``detector.second_pass: llm``,
-    see :class:`traciora_pii.llm_pii_detector.LLMPIIDetector`). Running an LLM
-    *after* destructive redaction would only see already-masked text and
-    cannot recover the semantic entities the regex missed.
-    """
-
-    def __init__(self, *, enabled: bool = True, excluded_categories: Iterable[str] | None = None):
+    def __init__(self, *, enabled: bool = True, excluded_categories: Iterable[str] | None = None,
+                 config: "PIIConfig | None" = None):
         from ._masking_policy import resolve_exclusions
-        self._excluded_categories = resolve_exclusions(excluded_categories)
+        self._config = config
+        self._excluded_categories = resolve_exclusions(
+            config.detector.excluded_categories
+            if config is not None and excluded_categories is None else excluded_categories
+        )
         self.enabled = enabled
 
     @classmethod
@@ -53,6 +47,7 @@ class PIIRedactor:
         """
         return cls(
             enabled=config.detector.masking_enabled,
+            config=config,
             excluded_categories=config.detector.excluded_categories,
         )
 
@@ -60,7 +55,7 @@ class PIIRedactor:
         if not self.enabled or not text:
             return RedactionResult(text=text, findings=[])
         regex_redacted, findings = redact_pii_text(
-            text, excluded_categories=self._excluded_categories,
+            text, excluded_categories=self._excluded_categories, config=self._config,
         )
         return RedactionResult(text=regex_redacted, findings=findings)
 

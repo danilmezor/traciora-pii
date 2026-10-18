@@ -6,6 +6,11 @@ The default policy is loaded lazily on first use and cached for the process.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .config import PIIConfig
 from dataclasses import dataclass
 from collections.abc import Callable, Iterable
 
@@ -90,19 +95,35 @@ def _keyword_ok(text: str, finding_start: int, finding_end: int, detector: PIIDe
     return any(keyword in snippet for keyword in detector.keywords)
 
 
+@lru_cache(maxsize=16)
+def _compile_policies(specs: tuple[str, ...]) -> tuple[PIIDetector, ...]:
+    from .policies.loader import compile_multi_regex_policy
+    return tuple(compile_multi_regex_policy(specs))
+
+
+def configured_detectors(config: "PIIConfig") -> tuple[PIIDetector, ...]:
+    return _compile_policies(tuple(config.detector.regex_policies or
+                                   [config.detector.regex_policy or "ru"]))
+
+
 def detect_pii(
     text: str, detectors: Iterable[PIIDetector] | None = None, *,
     excluded_categories: Iterable[str] | None = None,
+    config: "PIIConfig | None" = None,
 ) -> list[PIIFinding]:
     if not text:
         return []
 
     from ._masking_policy import category_is_excluded, resolve_exclusions
-    excluded = resolve_exclusions(excluded_categories)
+    excluded = resolve_exclusions(
+        config.detector.excluded_categories
+        if config is not None and excluded_categories is None else excluded_categories
+    )
 
     with time_detector("regex"):
         findings: list[PIIFinding] = []
-        active = list(detectors) if detectors is not None else _get_default_detectors()
+        active = (list(detectors) if detectors is not None else
+                  configured_detectors(config) if config is not None else _get_default_detectors())
         for detector in active:
             if category_is_excluded(detector.placeholder, excluded):
                 continue
@@ -128,11 +149,12 @@ def detect_pii(
 def redact_pii_text(
     text: str, detectors: Iterable[PIIDetector] | None = None, *,
     excluded_categories: Iterable[str] | None = None,
+    config: "PIIConfig | None" = None,
 ) -> tuple[str, list[PIIFinding]]:
     if not text:
         return text, []
 
-    findings = detect_pii(text, detectors=detectors, excluded_categories=excluded_categories)
+    findings = detect_pii(text, detectors=detectors, excluded_categories=excluded_categories, config=config)
     if not findings:
         return text, []
 
@@ -161,3 +183,14 @@ def redact_pii_text(
         cursor = finding.end
     chunks.append(text[cursor:])
     return "".join(chunks), merged
+
+
+_LONG_NUMBER = PIIDetector("long_number", re.compile(r"(?<![\w-])\d{10,}(?!\w)"), "[NUMBER]")
+
+
+def scrub(text: str, *, config: "PIIConfig | None" = None) -> str:
+    """Regex-only logging policy, independent of conversational exclusions."""
+    if not text:
+        return text
+    detectors = configured_detectors(config) if config is not None else _get_default_detectors()
+    return redact_pii_text(text, detectors=(*detectors, _LONG_NUMBER), excluded_categories=[])[0]
