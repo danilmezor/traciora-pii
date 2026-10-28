@@ -85,7 +85,7 @@ def main():
             if callable(close):
                 close()
         except Exception as exc:  # noqa: BLE001
-            print(f"  regex_presidio     skipped: {type(exc).__name__}: {exc}")
+            print(f"  regex_presidio     error: {type(exc).__name__}: {exc}")
 
         try:
             cfg = base_cfg.with_overrides({"detector": {"second_pass": "opf"}})
@@ -97,7 +97,7 @@ def main():
             if callable(close):
                 close()
         except Exception as exc:  # noqa: BLE001
-            print(f"  regex_opf_routed   skipped: {type(exc).__name__}: {exc}")
+            print(f"  regex_opf_routed   error: {type(exc).__name__}: {exc}")
 
         nemo = NemoCachedDetector(nemo_cache(lang))
         pr, _ = metrics.detection_precision_recall_with_records(ds, second_pass_detector=nemo)

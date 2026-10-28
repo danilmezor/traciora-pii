@@ -223,35 +223,17 @@ def build_second_pass_detector(
     Supported modes: ``"none"`` (returns None), ``"opf"`` (OPFPIIDetector;
     ``opf_model_name`` or ``detector.opf.default_model`` picks the entry
     from ``detector.opf.models``), ``"llm"`` (LLMPIIDetector), and
-    ``"presidio"`` (PresidioPIIDetector). Missing optional extras or
-    construction failures log a warning and return None so the caller
-    falls back to regex-only detection.
+    ``"presidio"`` (PresidioPIIDetector). The detector is a compliance
+    control: a missing extra or a construction failure raises, never
+    degrades to regex-only.
     """
     mode = config.detector.second_pass.strip().lower()
     if mode == "none":
         return None
     if mode == "opf":
-        try:
-            from .opf_pii_detector import OPFPIIDetector
-        except ImportError as exc:
-            logger.warning(
-                "second_pass=opf requested but the `opf` extra is not installed; "
-                "install with `pip install -e '.[opf]'`. Falling back to regex-only. "
-                "error=%s",
-                exc,
-            )
-            return None
-        try:
-            detector = OPFPIIDetector.from_config(
-                config.detector.opf, model_name=opf_model_name,
-            )
-        except Exception as exc:  # noqa: BLE001 — construction failure fallback; see warning log
-            logger.warning(
-                "Failed to construct OPFPIIDetector; falling back to regex-only. "
-                "error_type=%s error=%s",
-                type(exc).__name__, exc,
-            )
-            return None
+        from .opf_pii_detector import OPFPIIDetector
+
+        detector = OPFPIIDetector.from_config(config.detector.opf, model_name=opf_model_name)
         logger.info(
             "PIIVirtualizer second-pass: opf model=%s device=%s",
             opf_model_name or config.detector.opf.default_model,
@@ -259,24 +241,9 @@ def build_second_pass_detector(
         )
         return detector
     if mode == "llm":
-        try:
-            from .llm_pii_detector import LLMPIIDetector
-        except ImportError as exc:
-            logger.warning(
-                "second_pass=llm requested but module unavailable; "
-                "falling back to regex-only. error=%s",
-                exc,
-            )
-            return None
-        try:
-            detector = LLMPIIDetector.from_config(config.detector.llm)
-        except Exception as exc:  # noqa: BLE001 — construction failure fallback; see warning log
-            logger.warning(
-                "Failed to construct LLMPIIDetector; falling back to regex-only. "
-                "error_type=%s error=%s",
-                type(exc).__name__, exc,
-            )
-            return None
+        from .llm_pii_detector import LLMPIIDetector
+
+        detector = LLMPIIDetector.from_config(config.detector.llm)
         logger.info(
             "PIIVirtualizer second-pass: llm base_url=%s model=%s",
             config.detector.llm.base_url,
@@ -284,26 +251,9 @@ def build_second_pass_detector(
         )
         return detector
     if mode == "presidio":
-        try:
-            from .presidio_pii_detector import PresidioPIIDetector
-        except ImportError as exc:
-            logger.warning(
-                "second_pass=presidio requested but the `presidio` extra is not installed; "
-                "install with `pip install -e '.[presidio]'` and download the spaCy model "
-                "for your language (e.g. `python -m spacy download en_core_web_sm`). "
-                "Falling back to regex-only. error=%s",
-                exc,
-            )
-            return None
-        try:
-            detector = PresidioPIIDetector.from_config(config.detector.presidio)
-        except Exception as exc:  # noqa: BLE001 — construction failure fallback; see warning log
-            logger.warning(
-                "Failed to construct PresidioPIIDetector; falling back to regex-only. "
-                "error_type=%s error=%s",
-                type(exc).__name__, exc,
-            )
-            return None
+        from .presidio_pii_detector import PresidioPIIDetector
+
+        detector = PresidioPIIDetector.from_config(config.detector.presidio)
         logger.info(
             "PIIVirtualizer second-pass: presidio language=%s score_threshold=%s",
             config.detector.presidio.language,

@@ -170,9 +170,8 @@ def _detector_configuration(
 
     ``config.detector.second_pass`` is the user-requested mode
     (``none`` / ``opf`` / ``llm`` / ``presidio``). ``effective_mode``
-    reports what the harness ended up with — they differ only when a
-    request fell back to regex-only because the optional dependency was
-    missing or construction failed.
+    reports the class the harness built; construction failures raise
+    before this point.
     """
     detector_class = type(second_pass_detector).__name__ if second_pass_detector is not None else ""
     requested_mode = config.detector.second_pass
@@ -184,13 +183,11 @@ def _detector_configuration(
         effective_mode = "llm"
     else:
         effective_mode = detector_class.lower() or "unknown"
-    fallback = requested_mode != "none" and second_pass_detector is None
     opf_entry = config.detector.opf.models.get(opf_model)
     return {
         "requested_mode": requested_mode,
         "effective_mode": effective_mode,
         "second_pass_enabled": second_pass_detector is not None,
-        "fallback_to_regex_only": fallback,
         "second_pass_class": detector_class,
         "opf_model_name": opf_model if requested_mode == "opf" else "",
         "opf_checkpoint": opf_entry.checkpoint if (requested_mode == "opf" and opf_entry) else "",
@@ -238,7 +235,6 @@ _DETECTOR_CONFIG_KEYS = (
     "requested_mode",
     "effective_mode",
     "second_pass_enabled",
-    "fallback_to_regex_only",
     "second_pass_class",
     "opf_model_name",
     "opf_checkpoint",
@@ -881,8 +877,8 @@ def main() -> int:
 
     # Build the second-pass detector before the dry-run branch so the
     # precision/recall sanity check actually reflects the requested
-    # ablation (regex+presidio / regex+opf / regex+llm). Failures log a
-    # warning and degrade to regex-only.
+    # ablation (regex+presidio / regex+opf / regex+llm). A construction
+    # failure raises and ends the run.
     second_pass_detector = build_second_pass_detector(config, opf_model_name=opf_model)
     detector_label = (
         type(second_pass_detector).__name__ if second_pass_detector is not None else "regex-only"
