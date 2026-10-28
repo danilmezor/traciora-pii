@@ -41,6 +41,7 @@ CONFIG_ORDER: List[str] = [
     "regex_only",
     "regex_opf_base",
     "regex_opf_routed",
+    "regex_encoder_routed",
     "regex_presidio",
     "regex_llm",
 ]
