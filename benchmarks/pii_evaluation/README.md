@@ -210,10 +210,10 @@ row, load average 8-10:
 
 ### Encoder anchor, 2026-10-28, M1 Pro CPU, commit c63ee0e
 
-`detector.second_pass: encoder` on `device: cpu`, threshold 0.5: ruBERT
+`detector.second_pass: encoder` on `device: cpu` (torch 2.15.0), threshold 0.5: ruBERT
 (`redmadrobot-rnd/rubert-base-pii-ner`) for ru, Horizon (`Horizon-Labs/pii-redactor-small`)
 for en and de, from the pinned cache under `~/.cache/traciora_pii/models/encoder/`. Same
-309 queries and 312 gold spans as above; load average 8-11, so s/query is indicative.
+309 queries and 312 gold spans as above; load average 8.3-9.2, so s/query is indicative.
 
 ```bash
 PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
@@ -225,11 +225,12 @@ PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
 | `regex_only` | 272 | 0 | 40 | 1.000 | 0.872 | 0.857 | 0.802 | 0.000 |
 | `regex_encoder_routed` | 304 | 4 | 8 | 0.987 | 0.974 | 0.959 | 0.943 | 0.095 |
 
-The 8 misses are the regex layer's 6 German Steuer-IDs and 1 Russian passport plus the name
-`König Maria` (`scn-mt-105-de`). The 4 false positives are all `[STREET_ADDRESS]`: room
-numbers in `scn-neg-603-de` (`Raum 4321`), `scn-neg-609-de` (`Raum 412`) and
-`scn-neg-609-ru` (`кабинете 412`), and `scn-mt-205-de`, where Horizon returns
-`Reeperbahn 84` and a separate `1` from `Etage 1`.
+The 8 misses are the regex layer's 6 `[DE_STEUER_ID]` (one in a ru query, `scn-sec-742-ru`)
+and 1 `[PERSONAL_ID]` (`scn-st-042-ru`, a СНИЛС), plus the name `König Maria`
+(`scn-mt-105-de`). The 4 false positives are all `[STREET_ADDRESS]`: room numbers in
+`scn-neg-603-de` (`Raum 4321`), `scn-neg-609-de` (`Raum 412`) and `scn-neg-609-ru`
+(`кабинете 412`), and `scn-mt-205-de`, where Horizon returns `Reeperbahn 84` and a separate
+`1` from `Etage 1`.
 
 hivetrace `pii-bench` (ru, `domain` + `entity` splits, 1,810 rows: 228 names, 176 addresses),
 overlap matching with projection-symmetric scoring:
@@ -243,12 +244,20 @@ PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
 |---|---|---:|---:|---|---:|---:|
 | `regex_only` | 0/0/228 | 0.000 | 0.000 | 0/0/176 | 0.000 | 0.000 |
 | `regex_encoder` | 227/7/1 | 0.970 [0.946, 0.991] | 0.996 [0.984, 1.000] | 168/12/8 | 0.933 [0.894, 0.968] | 0.955 [0.923, 0.982] |
+| study, pair B (overlap) | 227/7/1 | 0.970 | 0.996 | 168/15/8 | 0.918 | 0.955 |
 | gate | | ≥ 0.96 pass | ≥ 0.99 pass | | | ≥ 0.95 pass |
+
+The 3 fewer address false positives than the study come from the detector's output, not
+from scoring: both runs use the same rows, gold, overlap matcher and regex suppression. The
+productised wrapper joins the fragment across `на` into one span that overlaps the gold
+address in `domain-dialog_081` (`квартире 34 на ул. Садовая 18`), `domain-dialog_090`
+(`4 на Новослободской 21`) and `domain-st_096` (`офис на Тверской 15`), where the study's
+wrapper returned two spans (one TP, one FP).
 
 `anonymize_text` end to end on the four Russian profile workloads (`traciora_config("ru")`,
 regex, vault, encoder second pass, lemma), median of 3 after one warm-up, one process per
-row. CPU on the M1 Pro at load average 7.3-9.0; CUDA on an RTX 5060 Ti (Linux, torch 2.11.0+cu128, fp16) at load
-average 0.7-1.5:
+row. CPU on the M1 Pro (torch 2.15.0) at load average 7.3-8.3; CUDA on an RTX 5060 Ti
+(Linux, torch 2.11.0+cu128, fp16) at load average 0.7-1.5:
 
 | workload | chars | cpu (ms) | cuda (ms) | gate (cpu) |
 |---|---:|---:|---:|---|
@@ -258,12 +267,17 @@ average 0.7-1.5:
 | db_result | 66,974 | 8,142 | 351 | ≤ 8,000 |
 | phys_footprint peak (`proc_pid_rusage`) | | 486 MB | | < 1 GB |
 | CUDA peak allocated | | | 449 MB | |
-| process start to ready (incl. `prepare_second_pass` and self-check) | | 3.6-4.3 s (7.5 s cold) | 2.3 s (5.2 s cold) | |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 3.6-4.3 s (7.5 s cold) | 2.4 s (5.2 s cold) | |
 
-The CPU one-liner and table rows sit 6 % and 2 % over their gates at load average 7-9; the
-unloaded study run of the same path measured 43 / 90 / 1,645 / 6,453 ms and 446 MB, inside
-every gate. The self-check sentence yields `[PERSON_NAME]` for ru, en and de through
-`get_shared_second_pass`.
+CUDA document and table run at 84 / 351 ms against the spec's expected 60 / 250 ms; these
+are end-to-end times with regex, vault and lemma included.
+
+Gate 5 is not settled on this run: the CPU one-liner is 6 % and the table 2 % over their
+gates at load average 7.3-8.3; a rerun on a quiet machine decides it. The document row and
+the footprint pass. The unloaded study run of the same path measured 43 / 90 / 1,645 /
+6,453 ms and 446 MB. This run checked the ru self-check sentence (`[PERSON_NAME]` through
+`get_shared_second_pass`) in every timing process; en and de come from the Task 4 run at
+load average 21.
 
 Known limitation: room numbers come back as addresses from both models (`Raum 412`,
 `Raum 4321`, `кабинете 412`), 3 of the 4 false positives on the 309 set. No rule removes them.
