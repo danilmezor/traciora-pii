@@ -233,3 +233,34 @@ def test_plate_regex_keyword_anchored_no_false_positive(multi_detectors):
         detectors=multi_detectors,
     )
     assert "[LICENSE_PLATE]" not in [f.placeholder for f in findings]
+
+
+# ----------------------------------------------------------------------
+# DATE — dates of birth only: a 1900–2015 year on word boundaries
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("policy", ["en", "de", "ru"])
+@pytest.mark.parametrize("value", ["1985-03-12", "12.03.1985", "03/06/1951"])
+def test_date_of_birth_is_masked(policy, value):
+    text = f"Born {value}, please verify."
+    findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))
+    dates = [text[f.start:f.end] for f in findings if f.placeholder == "[DATE]"]
+    assert dates == [value]
+
+
+@pytest.mark.parametrize("policy", ["en", "de", "ru"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Move the appointment to 2026-08-20 14:00.",
+        "Build 5.2.0.1234 was deployed.",
+        "Version 2.0.1234 is live.",
+        "Order ORD-2026-0815 shipped.",
+        "Invoice dated 31.12.2024 is attached.",
+        "Ticket 1.2.1985.4 is open.",
+    ],
+)
+def test_non_birth_dates_are_not_masked(policy, text):
+    findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))
+    assert [text[f.start:f.end] for f in findings if f.placeholder == "[DATE]"] == []
