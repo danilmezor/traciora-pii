@@ -80,7 +80,7 @@ def test_routed_opf_failed_construction_returns_error_row(monkeypatch, synthetic
     spec = run_detector_ablation.AblationSpec(
         name="regex_opf_routed",
         second_pass="opf",
-        opf_model=run_detector_ablation.ROUTED_OPF,
+        opf_model=run_detector_ablation.ROUTED,
     )
     row = run_detector_ablation._run_one(
         spec,
@@ -93,10 +93,72 @@ def test_routed_opf_failed_construction_returns_error_row(monkeypatch, synthetic
     assert row.pr == {}
 
 
-def test_resolve_routed_opf_prefers_language_model_then_default():
+def test_resolve_routed_prefers_language_model_then_default():
     base_config = load_config()
-    # ru entry exists in traciora.yaml; en typically does not until the fine-tune ships.
-    assert run_detector_ablation._resolve_routed_opf(base_config, "ru") == "ru"
-    assert run_detector_ablation._resolve_routed_opf(base_config, "en") in {
-        "en", base_config.detector.opf.default_model,
-    }
+    for registry in ("opf", "encoder"):
+        assert run_detector_ablation._resolve_routed(base_config, "ru", registry) == "ru"
+        default = getattr(base_config.detector, registry).default_model
+        assert run_detector_ablation._resolve_routed(base_config, "xx", registry) == default
+
+
+class _RegexOnlyDetector:
+    """A second pass that finds nothing, so a routed row scores like regex-only."""
+
+    def __init__(self) -> None:
+        self.closed = False
+
+    def detect(self, text: str) -> list:
+        return []
+
+    def close(self) -> None:
+        self.closed = True
+
+
+def _routed_row(monkeypatch, spec, dataset):
+    calls: list[dict[str, Any]] = []
+    built: list[_RegexOnlyDetector] = []
+
+    def _recording_build(config, **kwargs):
+        calls.append({"second_pass": config.detector.second_pass, **kwargs})
+        built.append(_RegexOnlyDetector())
+        return built[-1]
+
+    monkeypatch.setattr(run_detector_ablation, "build_second_pass_detector", _recording_build)
+    row = run_detector_ablation._run_one(
+        spec,
+        base_config=load_config(),
+        dataset=dataset,
+        language_filter="all",
+        recorder=LatencyRecorder(),
+    )
+    assert all(d.closed for d in built)
+    return row, calls
+
+
+def test_routed_encoder_row_builds_per_language_and_aggregates_like_opf(
+    monkeypatch, synthetic_dataset,
+):
+    specs = {s.name: s for s in run_detector_ablation.ABLATION_CONFIGS}
+    encoder_spec = specs["regex_encoder_routed"]
+    assert encoder_spec.second_pass == "encoder"
+    assert encoder_spec.encoder_model == run_detector_ablation.ROUTED
+
+    encoder_row, encoder_calls = _routed_row(monkeypatch, encoder_spec, synthetic_dataset)
+    opf_row, opf_calls = _routed_row(monkeypatch, specs["regex_opf_routed"], synthetic_dataset)
+
+    assert encoder_calls == [
+        {"second_pass": "encoder", "encoder_model_name": "de"},
+        {"second_pass": "encoder", "encoder_model_name": "en"},
+    ]
+    assert opf_calls == [
+        {"second_pass": "opf", "opf_model_name": "de"},
+        {"second_pass": "opf", "opf_model_name": "en"},
+    ]
+    assert encoder_row.status == "ok"
+    assert encoder_row.encoder_model == run_detector_ablation.ROUTED
+    assert encoder_row.opf_model == ""
+    assert encoder_row.routing_decisions == {"de": "de", "en": "en"}
+    assert encoder_row.pr == opf_row.pr
+    assert encoder_row.per_query_records == opf_row.per_query_records
+    assert encoder_row.n_queries == opf_row.n_queries == len(synthetic_dataset)
+    assert run_detector_ablation._row_to_dict(encoder_row)["encoder_model"] == "ROUTED"

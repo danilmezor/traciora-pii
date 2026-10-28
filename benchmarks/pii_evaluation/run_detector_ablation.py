@@ -1,6 +1,6 @@
 """Consolidated detector ablation driver.
 
-Loops the dataset through five detector configurations and emits one
+Loops the dataset through six detector configurations and emits one
 markdown + JSON table comparing macro / micro precision and recall plus
 end-to-end seconds.
 
@@ -16,6 +16,9 @@ Configurations
                             (or any local endpoint). Model name must be
                             supplied via ``--detector-llm-model``.
   5. ``regex_presidio``   — regex + Microsoft Presidio (third-party baseline).
+  6. ``regex_encoder_routed`` — regex + per-language encoder from
+                            ``detector.encoder.models``, routed like
+                            ``regex_opf_routed``.
 
 A configuration whose detector cannot be constructed (extra not installed,
 checkpoint missing, --detector-llm-model not set) is reported with
@@ -68,7 +71,7 @@ from benchmarks.pii_evaluation import metrics
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results"
 
-ROUTED_OPF = "ROUTED"
+ROUTED = "ROUTED"
 LANGUAGES = ("en", "de", "ru")
 
 
@@ -77,6 +80,7 @@ class AblationSpec:
     name: str
     second_pass: str
     opf_model: Optional[str] = None  # ROUTED, "base", or None when N/A
+    encoder_model: str = ""  # ROUTED, or "" when N/A
 
 
 @dataclass
@@ -84,6 +88,7 @@ class AblationRow:
     name: str
     requested_mode: str
     opf_model: str
+    encoder_model: str = ""
     pr: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     n_queries: int = 0
     total_s: float = 0.0
@@ -99,9 +104,10 @@ class AblationRow:
 ABLATION_CONFIGS: List[AblationSpec] = [
     AblationSpec("regex_only",       second_pass="none"),
     AblationSpec("regex_opf_base",   second_pass="opf",      opf_model="base"),
-    AblationSpec("regex_opf_routed", second_pass="opf",      opf_model=ROUTED_OPF),
+    AblationSpec("regex_opf_routed", second_pass="opf",      opf_model=ROUTED),
     AblationSpec("regex_llm",   second_pass="llm"),
     AblationSpec("regex_presidio",   second_pass="presidio"),
+    AblationSpec("regex_encoder_routed", second_pass="encoder", encoder_model=ROUTED),
 ]
 
 
@@ -114,17 +120,16 @@ def _config_for_spec(
     return base.with_overrides({"detector": overrides})
 
 
-def _resolve_routed_opf(
-    config: PIIConfig, language: str,
-) -> str:
-    """Pick the OPF entry to use for *language* under the routed config.
+def _resolve_routed(config: PIIConfig, language: str, registry: str) -> str:
+    """Pick the entry of ``detector.<registry>`` (``opf`` or ``encoder``) for *language*.
 
-    Prefers a registered per-language fine-tune (``en``/``de``/``ru``)
-    and falls back to ``base`` when the language has no entry.
+    Prefers the entry registered under the language code and falls back to
+    the registry's ``default_model`` when the language has none.
     """
-    if language in config.detector.opf.models:
+    models = getattr(config.detector, registry)
+    if language in models.models:
         return language
-    return config.detector.opf.default_model or "base"
+    return models.default_model
 
 
 def _aggregate_pr(pr_runs: List[Dict[str, Dict[str, Any]]]) -> Dict[str, Dict[str, Any]]:
@@ -160,6 +165,7 @@ def _run_one(
         name=spec.name,
         requested_mode=spec.second_pass,
         opf_model=spec.opf_model or "",
+        encoder_model=spec.encoder_model,
     )
 
     if spec.second_pass == "none":
@@ -173,8 +179,7 @@ def _run_one(
         row.n_queries = len(dataset)
         return row
 
-    # OPF (base or routed) / llm / presidio
-    if spec.second_pass == "opf" and spec.opf_model == ROUTED_OPF:
+    if ROUTED in (spec.opf_model, spec.encoder_model):
         # Partition the dataset by language; build a detector per slice.
         recorder.reset()
         t0 = time.perf_counter()
@@ -188,11 +193,14 @@ def _run_one(
             subset = [q for q in dataset if q.language == lang]
             if not subset:
                 continue
-            opf_choice = _resolve_routed_opf(base_config, lang)
-            row.routing_decisions[lang] = opf_choice
+            choice = _resolve_routed(base_config, lang, spec.second_pass)
+            row.routing_decisions[lang] = choice
             cfg = _config_for_spec(spec, base_config, lang)
             try:
-                detector = build_second_pass_detector(cfg, opf_model_name=opf_choice)
+                if spec.second_pass == "encoder":
+                    detector = build_second_pass_detector(cfg, encoder_model_name=choice)
+                else:
+                    detector = build_second_pass_detector(cfg, opf_model_name=choice)
             except Exception as exc:  # noqa: BLE001 — reported as an error row
                 row.status = f"error: {type(exc).__name__}: {exc} (language={lang})"
                 row.total_s = time.perf_counter() - t0
@@ -251,6 +259,7 @@ def _row_to_dict(row: AblationRow) -> Dict[str, Any]:
         "name": row.name,
         "requested_mode": row.requested_mode,
         "opf_model": row.opf_model,
+        "encoder_model": row.encoder_model,
         "n_queries": row.n_queries,
         "total_s": row.total_s,
         "detector_total_s": row.detector_total_s,
@@ -386,8 +395,8 @@ def _write_markdown(
         )
     routing_rows = [r for r in rows if r.routing_decisions]
     if routing_rows:
-        lines.append("\n## Routed OPF — per-language model decisions\n")
-        lines.append("| Configuration | Language | OPF model |")
+        lines.append("\n## Routed second pass — per-language model decisions\n")
+        lines.append("| Configuration | Language | Model |")
         lines.append("|---|---|---|")
         for row in routing_rows:
             for lang in sorted(row.routing_decisions):
@@ -438,7 +447,10 @@ def main() -> int:
     try:
         rows: List[AblationRow] = []
         for spec in selected:
-            print(f"[{spec.name}] running ({spec.second_pass}, opf_model={spec.opf_model})...")
+            print(
+                f"[{spec.name}] running ({spec.second_pass}, opf_model={spec.opf_model}, "
+                f"encoder_model={spec.encoder_model})..."
+            )
             row = _run_one(
                 spec,
                 base_config=base_config,
