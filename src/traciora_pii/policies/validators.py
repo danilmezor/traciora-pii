@@ -67,3 +67,19 @@ def luhn(value: str) -> bool:
 
 
 register("luhn", luhn)
+
+
+def snils(value: str) -> bool:
+    """Return ``True`` iff ``value``'s eleven digits carry a valid SNILS check number.
+
+    The first nine digits, weighted 9 down to 1, sum to the check number
+    (the last two digits) modulo 101, with 100 and 101 read as 00.
+    """
+    digits = [int(c) for c in value if c.isdigit()]
+    if len(digits) != 11:
+        return False
+    total = sum(d * w for d, w in zip(digits[:9], range(9, 0, -1)))
+    return total % 101 % 100 == digits[9] * 10 + digits[10]
+
+
+register("snils", snils)

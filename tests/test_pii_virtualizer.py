@@ -186,10 +186,10 @@ class TestInputNormalization:
         # digits. Without NFKC, the regex misses; with NFKC, the canonical
         # form matches normally. Use US-shaped phone (matched by us_phone
         # in ru.yaml, which is the default policy).
-        full_width = "Call ４１５５５５２６７１."  # 4155552671
+        full_width = "Call ４１５-５５５-２６７１."  # 415-555-2671
         result = virtualizer.anonymize_text(scope, full_width)
         assert "phone_ref:" in result, f"NFKC did not enable detection: {result!r}"
-        assert "4155552671" not in result
+        assert "415-555-2671" not in result
 
 
 class TestVaultTransaction:

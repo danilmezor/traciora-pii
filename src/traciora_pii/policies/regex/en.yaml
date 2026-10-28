@@ -114,7 +114,10 @@ patterns:
     placeholder: '[PHONE]'
     # (?<!\d) / (?!\d) prevent matching inside a longer digit run; \b alone
     # let the 10-digit body match substrings of e.g. 12-digit INNs.
-    pattern: '(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)'
+    # A phone needs phone structure: a +1 prefix, an area code in
+    # parentheses, or a separator after the area code. A bare run of ten
+    # digits is an INN, a tracking number or the tail of an id, not a phone.
+    pattern: '(?<!\d)(?:\+1[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|(?:1[\s.-]?)?(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]?\d{4})(?!\d)'
 
   - name: iban
     placeholder: '[IBAN]'

@@ -160,7 +160,10 @@ patterns:
 
   - name: de_phone_local
     placeholder: '[PHONE]'
-    pattern: '(?<!\d)0\d{2,4}[\s.\-]\d{3,8}(?:[\s.\-]?\d{2,8})?(?!\d)'
+    # Not a group inside a longer grouped number: no digit group directly
+    # before or after, so SNILS (057-909-793 19) and spaced Steuer-IDs
+    # (52 462 017 834) are not read as phones.
+    pattern: '(?<!\d)(?<!\d[\s.\-])0\d{2,4}[\s.\-]\d{3,8}(?:[\s.\-]?\d{2,8})?(?![\s.\-]?\d)'
 
   - name: vin
     placeholder: '[VIN]'
