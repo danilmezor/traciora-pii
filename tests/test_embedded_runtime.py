@@ -217,3 +217,54 @@ def test_real_model_smoke(language):
         assert isinstance(detector.detect("Contact Alex Example for details."), list)
     finally:
         runtime.close_shared_second_pass()
+
+
+def test_prepare_opf_converts_for_mlx(monkeypatch, tmp_path):
+    from traciora_pii import opf_mlx_convert
+
+    config = runtime.traciora_config("ru").with_overrides({"detector": {
+        "second_pass": "opf", "opf": {"cache_dir": str(tmp_path), "device": "mlx", "mlx_bits": 8}}})
+    source = checkpoint(tmp_path, config)
+    (source / ".traciora_pii-opf-ready").touch()
+    calls = []
+
+    def fake_convert(src, dst, *, bits):
+        calls.append((src, dst, bits))
+        dst.mkdir(parents=True, exist_ok=True)
+        (dst / "model.safetensors").touch()
+        (dst / "source.json").write_text(json.dumps(
+            {"sha256": opf_mlx_convert._source_sha256(src), "bits": bits}))
+        return dst
+
+    monkeypatch.setattr(opf_mlx_convert, "convert_checkpoint", fake_convert)
+    expected = source.with_name(source.name + "-mlx-8bit")
+    assert runtime.prepare_opf(config) == expected
+    assert calls == [(source, expected, 8)]
+    assert runtime.prepare_opf(config) == expected
+    assert len(calls) == 1
+    (source / "model.safetensors").write_bytes(b"retrained")
+    runtime.prepare_opf(config)
+    assert len(calls) == 2
+
+
+def test_shared_second_pass_passes_mlx_bits(monkeypatch, tmp_path):
+    runtime.close_shared_second_pass()
+    config = runtime.traciora_config("ru").with_overrides({"detector": {
+        "second_pass": "opf", "opf": {"cache_dir": str(tmp_path), "device": "mlx", "mlx_bits": 8}}})
+    checkpoint(tmp_path, config)
+    made = []
+
+    class Recording(SelfCheckOPF):
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+            super().__init__()
+
+    monkeypatch.setattr(SelfCheckOPF, "findings",
+                        [LLMFinding("opf", 30, 45, "[PERSON_NAME]", "мария шнайдер")])
+    monkeypatch.setattr("traciora_pii.opf_pii_detector.OPFPIIDetector", Recording)
+    try:
+        runtime.get_shared_second_pass(config)
+        assert made[0]["device"] == "mlx"
+        assert made[0]["mlx_bits"] == 8
+    finally:
+        runtime.close_shared_second_pass()
