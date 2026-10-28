@@ -158,6 +158,7 @@ Configurations:
 3. `regex_opf_routed` — regex + per-language fine-tuned OPF; languages without a registered fine-tune fall back to the registry default. Matches production routing.
 4. `regex_llm` — regex + OpenAI-compatible LLM via OpenRouter (or any local endpoint). Requires `--detector-llm-model`; otherwise the row is reported with `status="skipped: …"`.
 5. `regex_presidio` — regex + Microsoft Presidio (third-party baseline).
+6. `regex_encoder_routed` — regex + per-language encoder from `detector.encoder.models` (ru ruBERT, en/de Horizon), routed like `regex_opf_routed`.
 
 Configurations whose dependencies are missing are reported with `status="skipped: <reason>"` rather than dropped silently. Output lands in `results/detector_ablation_<slug>.{md,json}`.
 
@@ -181,7 +182,7 @@ Russian passport without a keyword. Routed false positives: 2 each of `[DE_STEUE
 
 The routed row on `device: mlx` (2026-10-27, same Mac, base 628aca5 plus the MLX backend;
 other sessions kept the load average between 7 and 80, so s/query is indicative). The
-same three local fine-tunes, converted by `prepare_opf`, run in 512-token windows with
+same three local fine-tunes, converted by `prepare_second_pass`, run in 512-token windows with
 128 tokens of overlap:
 
 | Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
@@ -205,7 +206,81 @@ row, load average 8-10:
 | db_result | 66,974 | 3,847 | 4,053 |
 | MLX active after load / peak | | 2.61 / 3.33 GiB | 1.39 / 2.11 GiB |
 | phys_footprint peak | | 4.34 GB | 3.64 GB |
-| process start to ready (incl. `prepare_opf` and self-check) | | 12.5 s | 10.3 s |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 12.5 s | 10.3 s |
+
+### Encoder anchor, 2026-10-28, M1 Pro CPU, commit c63ee0e
+
+`detector.second_pass: encoder` on `device: cpu` (torch 2.15.0), threshold 0.5: ruBERT
+(`redmadrobot-rnd/rubert-base-pii-ner`) for ru, Horizon (`Horizon-Labs/pii-redactor-small`)
+for en and de, from the pinned cache under `~/.cache/traciora_pii/models/encoder/`. Same
+309 queries and 312 gold spans as above; load average 8.3-9.2, so s/query is indicative.
+
+```bash
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
+    --only regex_only,regex_encoder_routed
+```
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_only` | 272 | 0 | 40 | 1.000 | 0.872 | 0.857 | 0.802 | 0.000 |
+| `regex_encoder_routed` | 304 | 4 | 8 | 0.987 | 0.974 | 0.959 | 0.943 | 0.095 |
+
+The 8 misses are the regex layer's 6 `[DE_STEUER_ID]` (one in a ru query, `scn-sec-742-ru`)
+and 1 `[PERSONAL_ID]` (`scn-st-042-ru`, a СНИЛС), plus the name `König Maria`
+(`scn-mt-105-de`). The 4 false positives are all `[STREET_ADDRESS]`: room numbers in
+`scn-neg-603-de` (`Raum 4321`), `scn-neg-609-de` (`Raum 412`) and `scn-neg-609-ru`
+(`кабинете 412`), and `scn-mt-205-de`, where Horizon returns `Reeperbahn 84` and a separate
+`1` from `Etage 1`.
+
+hivetrace `pii-bench` (ru, `domain` + `entity` splits, 1,810 rows: 228 names, 176 addresses),
+overlap matching with projection-symmetric scoring:
+
+```bash
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
+    --dataset hivetrace_ru --target-rows 1810 --raw-limit 1810 --detector regex_encoder
+```
+
+| Detector | names TP/FP/FN | names P | names R | addresses TP/FP/FN | addresses P | addresses R |
+|---|---|---:|---:|---|---:|---:|
+| `regex_only` | 0/0/228 | 0.000 | 0.000 | 0/0/176 | 0.000 | 0.000 |
+| `regex_encoder` | 227/7/1 | 0.970 [0.946, 0.991] | 0.996 [0.984, 1.000] | 168/12/8 | 0.933 [0.894, 0.968] | 0.955 [0.923, 0.982] |
+| study, pair B (overlap) | 227/7/1 | 0.970 | 0.996 | 168/15/8 | 0.918 | 0.955 |
+| gate | | ≥ 0.96 pass | ≥ 0.99 pass | | | ≥ 0.95 pass |
+
+The 3 fewer address false positives than the study come from the detector's output, not
+from scoring: both runs use the same rows, gold, overlap matcher and regex suppression. The
+productised wrapper joins the fragment across `на` into one span that overlaps the gold
+address in `domain-dialog_081` (`квартире 34 на ул. Садовая 18`), `domain-dialog_090`
+(`4 на Новослободской 21`) and `domain-st_096` (`офис на Тверской 15`), where the study's
+wrapper returned two spans (one TP, one FP).
+
+`anonymize_text` end to end on the four Russian profile workloads (`traciora_config("ru")`,
+regex, vault, encoder second pass, lemma), median of 3 after one warm-up, one process per
+row. CPU on the M1 Pro (torch 2.15.0) at load average 7.3-8.3; CUDA on an RTX 5060 Ti
+(Linux, torch 2.11.0+cu128, fp16) at load average 0.7-1.5:
+
+| workload | chars | cpu (ms) | cuda (ms) | gate (cpu) |
+|---|---:|---:|---:|---|
+| small | 126 | 53.1 | 14.1 | ≤ 50 |
+| medium | 1,629 | 101 | 14.8 | |
+| document | 39,466 | 1,960 | 83.8 | ≤ 2,000 |
+| db_result | 66,974 | 8,142 | 351 | ≤ 8,000 |
+| phys_footprint peak (`proc_pid_rusage`) | | 486 MB | | < 1 GB |
+| CUDA peak allocated | | | 449 MB | |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 3.6-4.3 s (7.5 s cold) | 2.4 s (5.2 s cold) | |
+
+CUDA document and table run at 84 / 351 ms against the spec's expected 60 / 250 ms; these
+are end-to-end times with regex, vault and lemma included.
+
+Gate 5 is not settled on this run: the CPU one-liner is 6 % and the table 2 % over their
+gates at load average 7.3-8.3; a rerun on a quiet machine decides it. The document row and
+the footprint pass. The unloaded study run of the same path measured 43 / 90 / 1,645 /
+6,453 ms and 446 MB. This run checked the ru self-check sentence (`[PERSON_NAME]` through
+`get_shared_second_pass`) in every timing process; en and de come from the Task 4 run at
+load average 21.
+
+Known limitation: room numbers come back as addresses from both models (`Raum 412`,
+`Raum 4321`, `кабинете 412`), 3 of the 4 false positives on the 309 set. No rule removes them.
 
 ## Security stress — archetype 3 (tool-exception leakage)
 

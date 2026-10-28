@@ -1,4 +1,4 @@
-"""Evaluate the framework's regex + OPF detector against an
+"""Evaluate the framework's regex + second-pass detector against an
 imported HF dataset.
 
 Pulls a dataset through ``benchmarks.data_import``, applies the canonical
@@ -19,6 +19,9 @@ Example::
 
     PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
         --dataset nemotron_en --target-rows 200 --raw-limit 800
+
+    PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
+        --dataset hivetrace_ru --detector regex_encoder --target-rows 1810 --raw-limit 1810
 """
 from __future__ import annotations
 
@@ -99,6 +102,12 @@ AI4PRIVACY_DE_LABEL_MAP: Dict[str, str] = {
 }
 
 
+HIVETRACE_RU_LABEL_MAP: Dict[str, str] = {
+    "NAME": "[PERSON_NAME]",
+    "ADDRESS": "[STREET_ADDRESS]",
+}
+
+
 DATASETS = {
     "nemotron_en": {
         "locale": "en",
@@ -125,6 +134,12 @@ DATASETS = {
             "GIVENNAME", "SURNAME",  # pre-combine_names
             "STREET", "BUILDINGNUM", "CITY", "ZIPCODE",  # pre-combine_addresses
         },
+    },
+    "hivetrace_ru": {
+        "locale": "ru",
+        "opf_policy": "ru_comprehensive",
+        "label_map": HIVETRACE_RU_LABEL_MAP,
+        "allowed_labels": frozenset(HIVETRACE_RU_LABEL_MAP),
     },
     # Internal synthetic held-out test split. Sources from
     # ``fine_tuning/data/<slug>/test.jsonl`` written by
@@ -232,6 +247,7 @@ def _load_examples(
         NormalizedExample,
         Span,
         load_ai4privacy,
+        load_hivetrace_ru,
         load_nemotron_pii,
         load_wolframko_ru,
     )
@@ -249,6 +265,10 @@ def _load_examples(
         s1, _ = combine_names(raw)
         s2, _ = combine_addresses(s1)
         s3, _ = keep_only_allowed_labels(s2, allowlist=spec["allowed_labels"])
+    elif dataset_slug == "hivetrace_ru":
+        # Already consolidated: one NAME / ADDRESS span per entity, no combine steps.
+        raw = load_hivetrace_ru(limit=raw_limit)
+        s3, _ = keep_only_allowed_labels(raw, allowlist=spec["allowed_labels"])
     elif dataset_slug == "nemotron_en":
         raw = load_nemotron_pii(limit=raw_limit)
         s0, _ = quality_gate_nemotron(raw)
@@ -424,6 +444,7 @@ def _build_detectors(
     spec: dict,
     *,
     opf_model: Optional[str] = None,
+    encoder_model: Optional[str] = None,
     second_pass: str = "opf",
 ):
     """Return (regex_detectors, second_pass_detector_or_None).
@@ -431,6 +452,9 @@ def _build_detectors(
     ``second_pass`` selects the layer-2 implementation:
       * ``"opf"`` — our fine-tuned OPF; ``opf_model`` overrides the registry
         entry, default from ``detector.opf.default_model``.
+      * ``"encoder"`` — the encoder second pass; ``encoder_model`` overrides
+        the ``detector.encoder.models`` entry, default the entry registered
+        under the dataset locale, else ``detector.encoder.default_model``.
       * ``"presidio"`` — Microsoft Presidio analyzer with the WIDE_LABEL_MAP
         (PERSON/LOCATION/PHONE/EMAIL/SSN/IP/CARD/IBAN/URL/DATE/passport/
         driver_license/medical_license → our placeholders). Industry NER
@@ -459,6 +483,22 @@ def _build_detectors(
         )
         llm = LLMPIIDetector.from_config(cfg.detector.llm)
         return regex_detectors, llm
+
+    if second_pass == "encoder":
+        from traciora_pii.pii_virtualizer import build_second_pass_detector
+
+        chosen = encoder_model or (
+            spec["locale"] if spec["locale"] in cfg.detector.encoder.models
+            else cfg.detector.encoder.default_model
+        )
+        print(f"[eval] loading encoder detector (model={chosen})...", file=sys.stderr)
+        t0 = time.perf_counter()
+        encoder = build_second_pass_detector(
+            cfg.with_overrides({"detector": {"second_pass": "encoder"}}),
+            encoder_model_name=chosen,
+        )
+        print(f"[eval] encoder detector ready in {time.perf_counter() - t0:.1f}s", file=sys.stderr)
+        return regex_detectors, encoder
 
     if second_pass == "presidio":
         from traciora_pii.presidio_pii_detector import (
@@ -778,11 +818,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--detector",
-        choices=("regex_only", "regex_opf", "regex_llm", "both", "regex_presidio"),
+        choices=("regex_only", "regex_opf", "regex_encoder", "regex_llm", "both", "regex_presidio"),
         default="both",
         help="Which detection layer(s) to run. 'regex_only' = first-pass only "
              "(layer 1 baseline). 'regex_opf' / 'both' = layer 1 + our "
-             "fine-tuned OPF (default). 'regex_llm' = layer 1 + an OpenAI-"
+             "fine-tuned OPF (default). 'regex_encoder' = layer 1 + the "
+             "encoder second pass. 'regex_llm' = layer 1 + an OpenAI-"
              "compatible LLM via OpenRouter (requires --detector-llm-model). "
              "'regex_presidio' = layer 1 + Microsoft Presidio analyzer "
              "with WIDE_LABEL_MAP — industry NER baseline for §1 comparison.",
@@ -792,6 +833,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override the registry entry to load (e.g. 'base', 'ru', "
              "'ru-v6-published'). Default: detector.opf.default_model from config.",
+    )
+    parser.add_argument(
+        "--encoder-model",
+        default=None,
+        help="Override the detector.encoder.models entry to load for "
+             "--detector regex_encoder. Default: the entry registered under the "
+             "dataset locale, else detector.encoder.default_model.",
     )
     add_detector_llm_flags(parser)
     parser.add_argument(
@@ -838,7 +886,8 @@ def main(argv: list[str] | None = None) -> int:
 
     spec = DATASETS[args.dataset]
     print(f"[eval] dataset={args.dataset} target_rows={args.target_rows} raw_limit={args.raw_limit} "
-          f"detector={args.detector} opf_model={args.opf_model or '<default>'}"
+          f"detector={args.detector} opf_model={args.opf_model or '<default>'} "
+          f"encoder_model={args.encoder_model or '<locale>'}"
           + (f" internal_slug={args.internal_slug}" if args.internal_slug else ""),
           file=sys.stderr)
     examples = _load_examples(
@@ -855,10 +904,13 @@ def main(argv: list[str] | None = None) -> int:
         second_pass = "presidio"
     elif args.detector == "regex_llm":
         second_pass = "llm"
+    elif args.detector == "regex_encoder":
+        second_pass = "encoder"
     else:  # "regex_opf" or "both"
         second_pass = "opf"
     regex_detectors, opf_detector = _build_detectors(
-        spec, opf_model=args.opf_model, second_pass=second_pass,
+        spec, opf_model=args.opf_model, encoder_model=args.encoder_model,
+        second_pass=second_pass,
     )
 
     run = EvalRun(dataset=args.dataset)
@@ -926,6 +978,8 @@ def main(argv: list[str] | None = None) -> int:
                 else "default"
             )
             suffix = f"regex_llm__{llm_tag}"
+        elif args.detector == "regex_encoder":
+            suffix = f"regex_encoder__{args.encoder_model or 'locale'}"
         else:
             suffix = f"regex_opf__{args.opf_model or 'default'}"
         prefix = (

@@ -14,6 +14,7 @@ Python 3.11 or newer is required.
 pip install -e .
 pip install -e '.[dev]'          # tests and development tools
 pip install -e '.[opf]'          # OPF token-classification detector
+pip install -e '.[encoder]'      # encoder (ruBERT / Horizon ModernBERT) detector
 pip install -e '.[llm]'          # OpenAI-compatible second-pass detector
 pip install -e '.[presidio]'     # Presidio baseline; also needs spaCy models
 pip install -e '.[benchmarks]'   # benchmark tools
@@ -68,6 +69,7 @@ second pass is selected with `detector.second_pass`:
 |---|---|
 | `none` | Regex only; checked-in default |
 | `opf` | Token classifier selected from `detector.opf.models` |
+| `encoder` | Encoder token classifier selected from `detector.encoder.models` |
 | `llm` | Configured OpenAI-compatible endpoint |
 | `presidio` | Presidio with the configured spaCy model |
 

@@ -6,8 +6,10 @@ The source datasets use slightly different span schemas:
   ``{label, start, end, text}``.
 * ``wolframko/russian-pii-66k`` stores ``{label, start, end, value}``
   inside a ``privacy_mask`` list.
+* ``hivetrace/pii-bench`` stores ``{type, start, end, text}`` inside an
+  ``entities`` list.
 
-Both are normalized into ``NormalizedExample`` / ``Span`` so downstream
+All are normalized into ``NormalizedExample`` / ``Span`` so downstream
 audits and eval harnesses can share transform code.
 
 Loaders return an iterator of :class:`NormalizedExample` so we can stream
@@ -32,6 +34,8 @@ except ImportError as exc:  # pragma: no cover
 AI4PRIVACY_REPO = "ai4privacy/pii-masking-openpii-1m"
 NEMOTRON_REPO = "nvidia/Nemotron-PII"
 WOLFRAMKO_REPO = "wolframko/russian-pii-66k"
+HIVETRACE_REPO = "hivetrace/pii-bench"
+HIVETRACE_REVISION = "cd6a18ace16daf23e79247ccf1e2b245d4054654"
 
 
 @dataclass(frozen=True)
@@ -212,3 +216,37 @@ def load_wolframko_ru(
             },
         )
         yielded += 1
+
+
+def load_hivetrace_ru(*, limit: int | None = None) -> Iterator[NormalizedExample]:
+    """Load hivetrace/pii-bench (Apache-2.0, fully synthetic Russian) at the pinned revision.
+
+    Reads the ``domain`` split, then ``entity``. Only ``NAME`` and ``ADDRESS``
+    entities become spans; an entity whose ``text`` differs from
+    ``text[start:end]`` is dropped and counted in ``meta["n_dropped_spans"]``.
+    """
+    yielded = 0
+    for split in ("domain", "entity"):
+        for row in load_dataset(HIVETRACE_REPO, split=split, revision=HIVETRACE_REVISION):
+            if limit is not None and yielded >= limit:
+                return
+            text = row["text"]
+            kept = [e for e in row["entities"] or [] if e["type"] in {"NAME", "ADDRESS"}]
+            spans = [
+                Span(label=e["type"], value=e["text"], start=e["start"], end=e["end"])
+                for e in kept
+                if text[e["start"]:e["end"]] == e["text"]
+            ]
+            yield NormalizedExample(
+                id=f"hivetrace-{split}-{row['id']}",
+                locale="ru",
+                text=text,
+                spans=spans,
+                source="hivetrace",
+                meta={
+                    "split": split,
+                    "domain": row.get("domain"),
+                    "n_dropped_spans": len(kept) - len(spans),
+                },
+            )
+            yielded += 1

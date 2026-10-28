@@ -82,3 +82,6 @@ docs/
 /traciora-pii-paper/
 /.claude/
 /scripts/push_anon_models.sh
+
+# Subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

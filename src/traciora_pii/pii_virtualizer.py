@@ -217,12 +217,15 @@ def build_second_pass_detector(
     config: PIIConfig,
     *,
     opf_model_name: str | None = None,
+    encoder_model_name: str | None = None,
 ) -> _SecondPassDetector | None:
     """Build the second-pass detector configured under ``detector.second_pass``.
 
     Supported modes: ``"none"`` (returns None), ``"opf"`` (OPFPIIDetector;
     ``opf_model_name`` or ``detector.opf.default_model`` picks the entry
-    from ``detector.opf.models``), ``"llm"`` (LLMPIIDetector), and
+    from ``detector.opf.models``), ``"encoder"`` (EncoderPIIDetector;
+    ``encoder_model_name`` or ``detector.encoder.default_model`` picks the
+    entry from ``detector.encoder.models``), ``"llm"`` (LLMPIIDetector), and
     ``"presidio"`` (PresidioPIIDetector). The detector is a compliance
     control: a missing extra or a construction failure raises, never
     degrades to regex-only.
@@ -238,6 +241,17 @@ def build_second_pass_detector(
             "PIIVirtualizer second-pass: opf model=%s device=%s",
             opf_model_name or config.detector.opf.default_model,
             config.detector.opf.device,
+        )
+        return detector
+    if mode == "encoder":
+        from .encoder_pii_detector import EncoderPIIDetector
+
+        detector = EncoderPIIDetector.from_config(config.detector.encoder,
+                                                  model_name=encoder_model_name)
+        logger.info(
+            "PIIVirtualizer second-pass: encoder model=%s device=%s",
+            encoder_model_name or config.detector.encoder.default_model,
+            config.detector.encoder.device,
         )
         return detector
     if mode == "llm":
@@ -262,7 +276,7 @@ def build_second_pass_detector(
         return detector
     raise ValueError(
         f"detector.second_pass={mode!r} is not a valid mode. "
-        "Expected one of: none, opf, llm, presidio.",
+        "Expected one of: none, opf, encoder, llm, presidio.",
     )
 
 
