@@ -190,3 +190,30 @@ class TestInputNormalization:
         result = virtualizer.anonymize_text(scope, full_width)
         assert "phone_ref:" in result, f"NFKC did not enable detection: {result!r}"
         assert "4155552671" not in result
+
+
+class TestVaultTransaction:
+    def test_anonymize_text_commits_once(self, vault, virtualizer, scope):
+        from test_pii_vault import _CommitCounter
+        counter = _CommitCounter(vault._conn)
+        vault._conn = counter
+        text = " ".join(f"user{i}@example.com" for i in range(50))
+        result = virtualizer.anonymize_text(scope, text)
+        assert result.count("email_ref:") == 50
+        assert counter.commits == 1
+
+    def test_anonymize_text_failure_leaves_no_tokens(self, vault, virtualizer, scope, monkeypatch):
+        real = vault.get_or_create_token
+        calls = []
+
+        def failing(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 3:
+                raise RuntimeError("vault write failed")
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(vault, "get_or_create_token", failing)
+        text = " ".join(f"user{i}@example.com" for i in range(5))
+        with pytest.raises(RuntimeError, match="vault write failed"):
+            virtualizer.anonymize_text(scope, text)
+        assert vault.resolve_all_tokens(scope) == {}

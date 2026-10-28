@@ -11,6 +11,8 @@ import re
 import secrets
 import sqlite3
 import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -88,7 +90,10 @@ class PIIVaultStore:
     def __init__(self, db_path: str | Path, encryption_key: str | bytes):
         self._db_path = Path(db_path)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        # Re-entrant so the thread that holds a batch can call the token
+        # methods; other threads wait until the batch commits or rolls back.
+        self._lock = threading.RLock()
+        self._batch_depth = 0
 
         if isinstance(encryption_key, str):
             encryption_key = encryption_key.encode() if encryption_key else Fernet.generate_key()
@@ -99,6 +104,30 @@ class PIIVaultStore:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA_SQL)
         self._conn.commit()
+
+    @contextmanager
+    def batch(self) -> Iterator[None]:
+        """Hold the vault for one transaction: commit once on exit, roll back on error.
+
+        Every write made inside the block by this thread defers its commit, so a
+        text with hundreds of values pays one commit, and a failure part-way leaves
+        none of the block's tokens behind.
+        """
+        with self._lock:
+            self._batch_depth += 1
+            try:
+                yield
+            except BaseException:
+                self._batch_depth -= 1
+                if self._batch_depth == 0:
+                    self._conn.rollback()
+                raise
+            self._batch_depth -= 1
+            self._commit()
+
+    def _commit(self) -> None:
+        if self._batch_depth == 0:
+            self._conn.commit()
 
     # ------------------------------------------------------------------
     # Session lifecycle
@@ -120,7 +149,7 @@ class PIIVaultStore:
                         "UPDATE session_context SET last_accessed_at = ? WHERE session_scope_key = ?",
                         (now, session_scope_key),
                     )
-                    self._conn.commit()
+                    self._commit()
                     return nonce
 
             nonce = secrets.token_hex(16)
@@ -130,7 +159,7 @@ class PIIVaultStore:
                 "VALUES (?, ?, ?, ?, 'active')",
                 (session_scope_key, nonce, now, now),
             )
-            self._conn.commit()
+            self._commit()
             logger.debug("PII vault session opened: scope=%s", session_scope_key)
             return nonce
 
@@ -142,7 +171,7 @@ class PIIVaultStore:
                 "WHERE session_scope_key = ?",
                 (_now_iso(), session_scope_key),
             )
-            self._conn.commit()
+            self._commit()
             logger.debug("PII vault session closed: scope=%s", session_scope_key)
 
     def touch_session(self, session_scope_key: str) -> None:
@@ -153,7 +182,7 @@ class PIIVaultStore:
                 "WHERE session_scope_key = ? AND status = 'active'",
                 (_now_iso(), session_scope_key),
             )
-            self._conn.commit()
+            self._commit()
 
     # ------------------------------------------------------------------
     # Token CRUD
@@ -215,7 +244,7 @@ class PIIVaultStore:
                     "WHERE session_scope_key = ? AND status = 'active'",
                     (now, session_scope_key),
                 )
-                self._conn.commit()
+                self._commit()
                 return ref_token
 
             # Generate new short id
@@ -238,7 +267,7 @@ class PIIVaultStore:
                 "WHERE session_scope_key = ? AND status = 'active'",
                 (now, session_scope_key),
             )
-            self._conn.commit()
+            self._commit()
             logger.debug(
                 "PII vault token created: type=%s preview=%s ref=%s",
                 pii_type, preview, ref_token,
@@ -263,7 +292,7 @@ class PIIVaultStore:
                 "WHERE session_scope_key = ? AND status = 'active'",
                 (_now_iso(), session_scope_key),
             )
-            self._conn.commit()
+            self._commit()
             ciphertext = row[0]
 
         try:
@@ -287,7 +316,7 @@ class PIIVaultStore:
                 "WHERE session_scope_key = ? AND status = 'active'",
                 (_now_iso(), session_scope_key),
             )
-            self._conn.commit()
+            self._commit()
 
         result: dict[str, str] = {}
         for ref_token, ciphertext in rows:
@@ -311,7 +340,7 @@ class PIIVaultStore:
                 (cutoff,),
             )
             count = cursor.rowcount
-            self._conn.commit()
+            self._commit()
         if count:
             logger.info("PII vault expired %d sessions (ttl=%dh)", count, ttl_hours)
         return count
