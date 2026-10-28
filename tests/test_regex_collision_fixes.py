@@ -241,7 +241,7 @@ def test_plate_regex_keyword_anchored_no_false_positive(multi_detectors):
 
 
 @pytest.mark.parametrize("policy", ["en", "de", "ru"])
-@pytest.mark.parametrize("value", ["1985-03-12", "12.03.1985", "03/06/1951"])
+@pytest.mark.parametrize("value", ["1985-03-12", "12.03.1985", "03/06/1951", "08/25/80", "08.01.54"])
 def test_date_of_birth_is_masked(policy, value):
     text = f"Born {value}, please verify."
     findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))

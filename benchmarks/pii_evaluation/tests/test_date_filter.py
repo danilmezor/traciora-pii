@@ -29,14 +29,23 @@ def _ex(spans: list[Span]) -> NormalizedExample:
 @pytest.mark.parametrize("value", [
     "14/02/1959",
     "29.11.1989",
-    "1-9-2024",
-    "2024-03-15",
+    "1-9-2004",
+    "2014-03-15",
 ])
 def test_keeps_supported_date_formats(value):
     ex = _ex([Span(label="DATE", value=value, start=0, end=len(value))])
     out = list(_filter_unsupported_date_spans([ex], locale="de"))
     assert len(out) == 1
     assert len(out[0].spans) == 1
+
+
+@pytest.mark.parametrize("value", ["1-9-2024", "2024-03-15"])
+def test_drops_dates_after_the_birth_date_window(value):
+    """The regex masks dates of birth only (years 1900-2015)."""
+    ex = _ex([Span(label="DATE", value=value, start=0, end=len(value))])
+    out = list(_filter_unsupported_date_spans([ex], locale="de"))
+    assert len(out) == 1
+    assert out[0].spans == []
 
 
 @pytest.mark.parametrize("value", [

@@ -67,12 +67,13 @@ patterns:
   # — unconditional —
   - name: date
     placeholder: '[DATE]'
-    # Dates of birth only. The four-digit year must fall in 1900-2015:
-    # customers younger than ten do not appear in these conversations, and
-    # every later date is an order, appointment or invoice date, not personal
-    # data. Revisit the upper bound yearly. The lookarounds reject a date-shaped
-    # run inside a longer dotted or dashed number (version 5.2.0.1234, ORD-2026-0815).
-    pattern: '(?<![\w./-])(?:\d{1,2}[./-]\d{1,2}[./-](?:19\d{2}|200\d|201[0-5])|(?:19\d{2}|200\d|201[0-5])[./-]\d{1,2}[./-]\d{1,2})(?![\w]|[./-]\d)'
+    # Dates of birth only. The year must fall in 1900-2015: customers younger
+    # than ten do not appear in these conversations, and every later date is
+    # an order, appointment or invoice date, not personal data. Revisit the
+    # upper bound yearly. A two-digit year (08/25/80) always reads as a year
+    # inside the window, so it is kept. The lookarounds reject a date-shaped
+    # run inside a longer dotted or dashed number (5.2.0.1234, ORD-2026-0815).
+    pattern: '(?<![\w./-])(?:\d{1,2}[./-]\d{1,2}[./-](?:19\d{2}|200\d|201[0-5]|\d{2})|(?:19\d{2}|200\d|201[0-5])[./-]\d{1,2}[./-]\d{1,2})(?![\w]|[./-]\d)'
 
   - name: email
     placeholder: '[EMAIL]'
