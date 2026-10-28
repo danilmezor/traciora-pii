@@ -1,8 +1,9 @@
 """Convert an opf privacy-filter checkpoint to the mlx-embeddings port's layout.
 
 The converted checkpoint lives beside its source in the model cache
-(``<source>-mlx-bf16`` or ``<source>-mlx-8bit``) and records the SHA-256 of the
-source weights, so a fine-tune re-trained under the same name is converted again.
+(``<source>-mlx-bf16`` or ``<source>-mlx-8bit``) and records the SHA-256, size and
+mtime of the source weights, so a fine-tune re-trained under the same name is
+converted again while an unchanged source is recognised without rehashing.
 The port's config and weights are derived from the opf checkpoint alone.
 
 Weight mapping (opf name -> port name):
@@ -41,13 +42,31 @@ def _source_sha256(src: Path) -> str:
     return digest.hexdigest()
 
 
+def _source_record(src: Path, bits: int | None, sha256: str) -> dict:
+    stat = (Path(src) / "model.safetensors").stat()
+    return {"sha256": sha256, "bits": bits, "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+
+
 def is_current(src: Path, dst: Path, bits: int | None) -> bool:
-    """True when ``dst`` was converted from the present ``src`` weights at ``bits``."""
+    """True when ``dst`` was converted from the present ``src`` weights at ``bits``.
+
+    The source is hashed only when its size or mtime differs from the record; a
+    matching hash then refreshes the record so the next check skips the hash.
+    """
     record = Path(dst) / _SOURCE_RECORD
     if not record.is_file() or not (Path(dst) / "model.safetensors").is_file():
         return False
     recorded = json.loads(record.read_text())
-    return recorded.get("bits") == bits and recorded.get("sha256") == _source_sha256(src)
+    if recorded.get("bits") != bits:
+        return False
+    stat = (Path(src) / "model.safetensors").stat()
+    if recorded.get("size") == stat.st_size and recorded.get("mtime_ns") == stat.st_mtime_ns:
+        return True
+    sha256 = _source_sha256(src)
+    if recorded.get("sha256") != sha256:
+        return False
+    record.write_text(json.dumps(_source_record(src, bits, sha256)))
+    return True
 
 
 def _port_config(opf_cfg: dict) -> dict:
@@ -155,7 +174,7 @@ def convert_checkpoint(src: Path, dst: Path, *, bits: int | None) -> Path:
     calibration = src / "viterbi_calibration.json"
     if calibration.is_file():
         shutil.copyfile(calibration, dst / calibration.name)
-    (dst / _SOURCE_RECORD).write_text(json.dumps({"sha256": _source_sha256(src), "bits": bits}))
+    (dst / _SOURCE_RECORD).write_text(json.dumps(_source_record(src, bits, _source_sha256(src))))
     return dst
 
 
