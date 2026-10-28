@@ -19,7 +19,7 @@
 
 detector:
   # Which second-pass detector runs after the regex first pass.
-  # one of: none | opf | llm | presidio
+  # one of: none | opf | encoder | llm | presidio
   second_pass: none
 
   # Categories to leave visible, applied to regex and all second-pass backends.
@@ -53,6 +53,33 @@ detector:
     mlx_bits: null               # mlx only: null = bf16, 8 = 8-bit affine (group 64)
     prefilter: false             # cheap regex prefilter before OPF forward pass
     cache_dir: null              # null = ~/.cache/traciora_pii/models/opf
+
+  # Encoder (BERT-family token-classification) second-pass.
+  # The `models` map is the registry — extend it by adding entries; remove
+  # by deleting them. `default_model` selects which entry runs when
+  # `second_pass: encoder` is active. A repo-id checkpoint is pinned by a
+  # 40-hex `revision`; a local path needs none.
+  encoder:
+    default_model: ru
+    models:
+      ru:
+        checkpoint: redmadrobot-rnd/rubert-base-pii-ner
+        revision: c802e8cd26f85d1cf920973ea6f83965a0618d63
+        family: rubert
+        description: "Russian BERT token classifier, 21 PII types (Apache-2.0)."
+      en:
+        checkpoint: Horizon-Labs/pii-redactor-small
+        revision: b9d834a12fc946a53551be95ba20ed9c11e9a553
+        family: horizon
+        description: "Multilingual ModernBERT PII redactor, 29 types (Apache-2.0)."
+      de:
+        checkpoint: Horizon-Labs/pii-redactor-small
+        revision: b9d834a12fc946a53551be95ba20ed9c11e9a553
+        family: horizon
+    device: cpu                  # cpu | cuda
+    threshold: 0.5               # minimum mean argmax probability over a fragment's tokens
+    threads: null                # torch intra-op threads on cpu; null = torch's default
+    cache_dir: null              # null = ~/.cache/traciora_pii/models/encoder
 
   # LLM (OpenAI-compatible) second-pass detector. Defaults to OpenRouter
   # so any small open-weight model (Nemotron, Llama, Mistral, Gemma) can

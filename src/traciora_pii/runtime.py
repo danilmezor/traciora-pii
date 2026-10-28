@@ -11,6 +11,16 @@ from .policies.loader import load_opf_policy
 
 LANGUAGES = ("en", "de", "ru")
 # One sentence per OPF policy locale; a working second pass finds the name in it.
+_HORIZON = {"checkpoint": "Horizon-Labs/pii-redactor-small",
+            "revision": "b9d834a12fc946a53551be95ba20ed9c11e9a553", "family": "horizon"}
+ENCODER_MODELS = {
+    "ru": {"checkpoint": "redmadrobot-rnd/rubert-base-pii-ner",
+           "revision": "c802e8cd26f85d1cf920973ea6f83965a0618d63", "family": "rubert",
+           "description": "Russian BERT token classifier, 21 PII types (Apache-2.0)."},
+    "en": {**_HORIZON,
+           "description": "Multilingual ModernBERT PII redactor, 29 types (Apache-2.0)."},
+    "de": _HORIZON,
+}
 SELF_CHECK_SENTENCES = {
     "en": "Please call Maria Schneider tomorrow.",
     "de": "Bitte rufen Sie morgen Maria Schneider an.",
@@ -33,6 +43,7 @@ def traciora_config(language: str = "en") -> PIIConfig:
             language: {"checkpoint": f"pii-anon/opf-{language}-v2",
                        "policy": f"{language}_comprehensive"},
         }},
+        "encoder": {"default_model": language, "models": {language: ENCODER_MODELS[language]}},
     }})
 
 

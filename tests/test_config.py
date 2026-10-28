@@ -18,7 +18,11 @@ from pathlib import Path
 
 import pytest
 
+from pydantic import ValidationError
+
 from traciora_pii.config import (
+    EncoderConfig,
+    EncoderModelEntry,
     OPFConfig,
     OPFModelEntry,
     PIIConfig,
@@ -273,7 +277,44 @@ def test_opf_config_accepts_mlx_device_and_bits():
 
 
 def test_opf_config_rejects_other_bits():
-    from pydantic import ValidationError
-
     with pytest.raises(ValidationError, match="8"):
         OPFConfig(device="mlx", mlx_bits=4)
+
+
+def test_encoder_entry_requires_revision_for_repo_id():
+    with pytest.raises(ValidationError, match="revision"):
+        EncoderModelEntry(checkpoint="Horizon-Labs/pii-redactor-small", family="horizon")
+    with pytest.raises(ValidationError, match="revision"):
+        EncoderModelEntry(checkpoint="Horizon-Labs/pii-redactor-small", revision="main",
+                          family="horizon")
+    entry = EncoderModelEntry(checkpoint="Horizon-Labs/pii-redactor-small",
+                              revision="b9d834a12fc946a53551be95ba20ed9c11e9a553",
+                              family="horizon")
+    assert entry.revision == "b9d834a12fc946a53551be95ba20ed9c11e9a553"
+
+
+def test_encoder_entry_accepts_local_path_without_revision(tmp_path):
+    for checkpoint in ("/opt/models/rubert", "~/models/rubert", "./models/rubert"):
+        assert EncoderModelEntry(checkpoint=checkpoint, family="rubert").revision is None
+    (tmp_path / "org" / "name").mkdir(parents=True)
+    existing = str(tmp_path / "org" / "name")
+    assert EncoderModelEntry(checkpoint=existing, family="rubert").revision is None
+
+
+def test_encoder_family_and_device_are_closed():
+    with pytest.raises(ValidationError) as excinfo:
+        EncoderModelEntry(checkpoint="/opt/models/bert", family="bert")
+    assert "rubert" in str(excinfo.value) and "horizon" in str(excinfo.value)
+    with pytest.raises(ValidationError) as excinfo:
+        EncoderConfig(device="mps")
+    assert "cpu" in str(excinfo.value) and "cuda" in str(excinfo.value)
+
+
+def test_encoder_env_overrides(yaml_path, monkeypatch, tmp_path):
+    monkeypatch.setenv("PII_ENCODER_DEVICE", "cuda")
+    monkeypatch.setenv("PII_ENCODER_MODEL", "en")
+    monkeypatch.setenv("PII_ENCODER_CACHE_DIR", str(tmp_path))
+    cfg = load_config(yaml_path)
+    assert cfg.detector.encoder.device == "cuda"
+    assert cfg.detector.encoder.default_model == "en"
+    assert cfg.detector.encoder.cache_dir == str(tmp_path)

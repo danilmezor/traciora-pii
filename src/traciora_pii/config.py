@@ -43,6 +43,7 @@ Env override example::
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
@@ -88,6 +89,56 @@ class OPFConfig(BaseModel):
     def _mlx_bits_known(cls, value: int | None) -> int | None:
         if value not in (None, 8):
             raise ValueError(f"mlx_bits must be null (bf16) or 8, got {value!r}")
+        return value
+
+
+class EncoderModelEntry(BaseModel):
+    """One encoder token classifier registered for selection by name.
+
+    ``checkpoint`` is a HuggingFace repo id (``org/name``) pinned by a
+    40-hex ``revision``, or a local path (absolute, ``~``, ``.``, or an
+    existing directory) that needs no revision. ``family`` names the
+    label scheme the detector reads from the classifier head.
+    """
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    checkpoint: str
+    revision: str | None = None
+    family: str
+    description: str = ""
+
+    @field_validator("family")
+    @classmethod
+    def _family_known(cls, value: str) -> str:
+        if value not in ("rubert", "horizon"):
+            raise ValueError(f"family must be rubert or horizon, got {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _repo_id_pinned(self) -> "EncoderModelEntry":
+        local = self.checkpoint.startswith(("/", "~", ".")) or Path(self.checkpoint).is_dir()
+        if not local and not re.fullmatch(r"[0-9a-f]{40}", self.revision or ""):
+            raise ValueError(
+                f"checkpoint {self.checkpoint!r} is a repo id; revision must be a "
+                f"40-hex commit, got {self.revision!r}"
+            )
+        return self
+
+
+class EncoderConfig(BaseModel):
+    """Encoder (BERT-family token-classification) second-pass detector wiring."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    default_model: str = "ru"
+    models: dict[str, EncoderModelEntry] = Field(default_factory=dict)
+    device: str = "cpu"
+    threshold: float = 0.5
+    threads: int | None = None
+    cache_dir: str | None = None
+
+    @field_validator("device")
+    @classmethod
+    def _device_known(cls, value: str) -> str:
+        if value not in ("cpu", "cuda"):
+            raise ValueError(f"device must be cpu or cuda, got {value!r}")
         return value
 
 
@@ -153,6 +204,7 @@ class DetectorConfig(BaseModel):
     excluded_categories: list[VaultCategory] = Field(default_factory=list)
     second_pass: str = "none"
     opf: OPFConfig = Field(default_factory=OPFConfig)
+    encoder: EncoderConfig = Field(default_factory=EncoderConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     presidio: PresidioConfig = Field(default_factory=PresidioConfig)
     # Exactly one of regex_policy / regex_policies should be set. Single-
@@ -264,6 +316,9 @@ _ENV_OVERRIDES: tuple = (
     ("PII_OPF_DEVICE", "detector.opf.device", str),
     ("PII_OPF_PREFILTER_ENABLED", "detector.opf.prefilter", "bool"),
     ("PII_OPF_CACHE_DIR", "detector.opf.cache_dir", str),
+    ("PII_ENCODER_MODEL", "detector.encoder.default_model", str),
+    ("PII_ENCODER_DEVICE", "detector.encoder.device", str),
+    ("PII_ENCODER_CACHE_DIR", "detector.encoder.cache_dir", str),
     ("PII_LLM_BASE_URL", "detector.llm.base_url", str),
     ("PII_LLM_MODEL", "detector.llm.model", str),
     ("PII_LLM_TIMEOUT", "detector.llm.timeout_seconds", float),
@@ -435,6 +490,8 @@ def reset_config() -> None:
 
 __all__ = [
     "DetectorConfig",
+    "EncoderConfig",
+    "EncoderModelEntry",
     "EvalConfig",
     "EvalLLMConfig",
     "LLMConfig",

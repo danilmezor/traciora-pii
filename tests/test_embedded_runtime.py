@@ -10,7 +10,20 @@ from traciora_pii import PIIVaultStore, PIIVirtualizer, detect_pii, runtime, scr
 from traciora_pii._detector_common import LLMFinding
 from traciora_pii.pii_leak_guard import PIILeakError, assert_model_safe
 from traciora_pii.policies.loader import load_opf_policy
+from traciora_pii.config import EncoderModelEntry
 from traciora_pii.redaction import PIIRedactor
+
+HORIZON = {"checkpoint": "Horizon-Labs/pii-redactor-small",
+           "revision": "b9d834a12fc946a53551be95ba20ed9c11e9a553", "family": "horizon"}
+ENCODER_PROFILES = {
+    "ru": EncoderModelEntry(
+        checkpoint="redmadrobot-rnd/rubert-base-pii-ner",
+        revision="c802e8cd26f85d1cf920973ea6f83965a0618d63", family="rubert",
+        description="Russian BERT token classifier, 21 PII types (Apache-2.0)."),
+    "en": EncoderModelEntry(
+        **HORIZON, description="Multilingual ModernBERT PII redactor, 29 types (Apache-2.0)."),
+    "de": EncoderModelEntry(**HORIZON),
+}
 
 
 @pytest.mark.parametrize("language", runtime.LANGUAGES)
@@ -22,6 +35,10 @@ def test_installed_profiles_are_explicit(language, monkeypatch, tmp_path):
     assert config.detector.regex_policy == language
     assert list(config.detector.opf.models) == [language]
     assert config.detector.opf.default_model == language
+    encoder = config.detector.encoder
+    assert list(encoder.models) == [language]
+    assert encoder.default_model == language
+    assert encoder.models[language] == ENCODER_PROFILES[language]
     assert not detect_pii("https://example.org/path", config=config)
     assert PIIRedactor.from_config(config).redact_text("https://example.org/path").text == "https://example.org/path"
     assert "@" not in PIIRedactor.from_config(config).redact_text("person@example.org").text
