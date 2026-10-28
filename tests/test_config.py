@@ -263,3 +263,17 @@ def test_opf_entry_requires_policy(tmp_path):
     )
     with pytest.raises(ValueError):
         load_config(path)
+
+
+def test_opf_config_accepts_mlx_device_and_bits():
+    cfg = OPFConfig(device="mlx", mlx_bits=8)
+    assert cfg.device == "mlx"
+    assert cfg.mlx_bits == 8
+    assert OPFConfig(device="mlx").mlx_bits is None
+
+
+def test_opf_config_rejects_other_bits():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="8"):
+        OPFConfig(device="mlx", mlx_bits=4)

@@ -49,7 +49,8 @@ detector:
         checkpoint: pii-anon/opf-de-v2
         policy: de_comprehensive
         description: "Fine-tuned OPF for German PII (v2; auto-fetched from anonymous HF on first use)."
-    device: cpu                  # cpu | cuda | mps
+    device: cpu                  # cpu | cuda | mps | mlx
+    mlx_bits: null               # mlx only: null = bf16, 8 = 8-bit affine (group 64)
     prefilter: false             # cheap regex prefilter before OPF forward pass
     cache_dir: null              # null = ~/.cache/traciora_pii/models/opf
 
