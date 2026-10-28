@@ -225,6 +225,16 @@ class OPFPIIDetector:
         self.hallucinated_drops = 0
         self.parse_failures = 0
 
+        # opf picks its Triton MoE kernels on any non-CPU device, and macOS has
+        # no Triton: on MPS every forward pass would fail. The torch-ops path
+        # runs there, so it is the default unless the caller chose explicitly.
+        if self.device == "mps":
+            os.environ.setdefault("OPF_MOE_TRITON", "0")
+        moe_triton = os.environ.get("OPF_MOE_TRITON")
+        use_triton = (moe_triton.strip().lower() in {"1", "true", "yes", "on"}
+                      if moe_triton is not None else self.device != "cpu")
+        logger.info("OPF MoE path on device=%s: %s", self.device,
+                    "triton" if use_triton else "torch-ops")
         self._opf = OPF(
             model=self.checkpoint,
             device=self.device,
