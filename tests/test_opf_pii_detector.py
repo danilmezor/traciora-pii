@@ -65,3 +65,24 @@ def test_cpu_leaves_moe_setting_alone(fake_opf, monkeypatch):
     monkeypatch.delenv("OPF_MOE_TRITON", raising=False)
     OPFPIIDetector(device="cpu", label_map={})
     assert fake_opf.seen == [None]
+
+
+def test_detector_mlx_requires_extra(fake_opf, monkeypatch, tmp_path):
+    monkeypatch.setitem(sys.modules, "mlx", None)
+    monkeypatch.setitem(sys.modules, "mlx.core", None)
+    with pytest.raises(ImportError, match=r"\[mlx\]"):
+        OPFPIIDetector(checkpoint=str(tmp_path), device="mlx", label_map={})
+    assert fake_opf.seen == []
+
+
+def test_detector_mlx_requires_converted_checkpoint(fake_opf, monkeypatch, tmp_path):
+    pytest.importorskip("mlx.core")
+    monkeypatch.delenv("OPF_MOE_TRITON", raising=False)
+    source = tmp_path / "opf-ru"
+    source.mkdir()
+    (source / "config.json").write_text("{}")
+    (source / "model.safetensors").write_bytes(b"weights")
+    with pytest.raises(ValueError, match="prepare_opf"):
+        OPFPIIDetector(checkpoint=str(source), device="mlx", mlx_bits=8, label_map={})
+    assert fake_opf.seen == []
+    assert "OPF_MOE_TRITON" not in os.environ

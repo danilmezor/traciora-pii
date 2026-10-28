@@ -128,6 +128,16 @@ fails the call. It
 raises again on every call until restart, without retrying the load. Session owners close
 their own vaults; only process shutdown closes the shared detector.
 
+On Apple silicon, `detector.opf.device: mlx` runs the OPF forward pass through
+MLX instead of PyTorch; it needs the `mlx` extra (`pip install -e '.[mlx]'`,
+macOS on arm64 only) and fails at construction otherwise, never falling back to
+CPU. `prepare_opf` converts the selected checkpoint once into a sibling
+directory in the cache (`<checkpoint>-mlx-bf16`, or `-mlx-8bit` with
+`mlx_bits: 8`) and converts again when the source weights change. The text is
+labelled in 512-token windows with 128 tokens of overlap, and opf's own
+aggregation, Viterbi decoder and span conversion produce the spans. 8-bit
+halves the memory and load time; it is not faster.
+
 The package's `scrub` is regex-only and uses a separate logging policy, including
 long-number masking. Conversational category exclusions do not weaken logging.
 Historical core token formats are not supported by this release; consumers must

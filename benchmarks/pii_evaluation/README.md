@@ -179,6 +179,34 @@ Russian passport without a keyword. Routed false positives: 2 each of `[DE_STEUE
 `[PERSONAL_ID]`, `[PERSON_NAME]`, `[SECRET]`, one each of `[RU_BANK_ACCOUNT]`, `[RU_OGRN]`,
 `[STREET_ADDRESS]`.
 
+The routed row on `device: mlx` (2026-10-27, same Mac, base 628aca5 plus the MLX backend;
+other sessions kept the load average between 7 and 80, so s/query is indicative). The
+same three local fine-tunes, converted by `prepare_opf`, run in 512-token windows with
+128 tokens of overlap:
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_opf_routed`, mlx bf16 | 311 | 11 | 1 | 0.966 | 0.997 | 0.784 | 0.817 | 0.097 |
+| `regex_opf_routed`, mlx 8-bit | 311 | 10 | 1 | 0.969 | 0.997 | 0.785 | 0.817 | 0.088 |
+
+bf16 has the anchor's counts and the same false positives by placeholder. 8-bit differs
+on one query: `scn-sec-710-ru` ("Найди клиента по референс-токену
+phone_ref:ph_deadbeef00.") loses its `[PERSON_NAME]` false positive.
+
+`anonymize_text` end to end on the four Russian profile workloads (regex, vault, MLX
+second pass with the ru fine-tune, lemma), median of 3 after one warm-up, one process per
+row, load average 8-10:
+
+| workload | chars | mlx bf16 (ms) | mlx 8-bit (ms) |
+|---|---:|---:|---:|
+| small | 126 | 15.2 | 21.8 |
+| medium | 1,629 | 62.2 | 78.9 |
+| document | 39,466 | 1,265 | 1,381 |
+| db_result | 66,974 | 3,847 | 4,053 |
+| MLX active after load / peak | | 2.61 / 3.33 GiB | 1.39 / 2.11 GiB |
+| phys_footprint peak | | 4.34 GB | 3.64 GB |
+| process start to ready (incl. `prepare_opf` and self-check) | | 12.5 s | 10.3 s |
+
 ## Security stress — archetype 3 (tool-exception leakage)
 
 The `tool_exception_leakage` workflow drives a tool that raises with the raw card number embedded in its `ValueError`. The agent loop in `pipelines.py` catches the exception and stringifies it verbatim into the next ToolMessage — that's the leak surface this archetype tests. Pass conditions are inverted from the other archetypes:

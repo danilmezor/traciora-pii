@@ -59,7 +59,12 @@ def validate_checkpoint(path: Path, policy: str) -> None:
 
 
 def prepare_opf(config: PIIConfig) -> Path | None:
-    """Download only the selected model; call at deployment/startup, never in a request."""
+    """Download only the selected model; call at deployment/startup, never in a request.
+
+    With ``device: mlx`` the checkpoint is also converted to the MLX layout beside
+    itself when that copy is absent or was made from other weights; the converted
+    path is returned.
+    """
     if config.detector.second_pass != "opf":
         return None
     from .opf_pii_detector import _resolve_opf_checkpoint
@@ -67,7 +72,13 @@ def prepare_opf(config: PIIConfig) -> Path | None:
     entry = cfg.models[cfg.default_model]
     path = Path(_resolve_opf_checkpoint(entry.checkpoint, cache_dir=cfg.cache_dir))
     validate_checkpoint(path, entry.policy)
-    return path
+    if cfg.device != "mlx":
+        return path
+    from . import opf_mlx_convert
+    converted = opf_mlx_convert.converted_path(path, cfg.mlx_bits)
+    if not opf_mlx_convert.is_current(path, converted, cfg.mlx_bits):
+        opf_mlx_convert.convert_checkpoint(path, converted, bits=cfg.mlx_bits)
+    return converted
 
 
 class SharedOPFDetector:
@@ -122,6 +133,7 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
             path = _cached_checkpoint(config)
             validate_checkpoint(path, entry.policy)
             detector = OPFPIIDetector(checkpoint=str(path), device=cfg.device,
+                                      mlx_bits=cfg.mlx_bits,
                                       prefilter_enabled=cfg.prefilter,
                                       label_map=policy.label_map)
         except Exception as exc:

@@ -192,6 +192,7 @@ class OPFPIIDetector:
         *,
         checkpoint: str | None = None,
         device: str = "cpu",
+        mlx_bits: int | None = None,
         output_mode: str = "typed",
         decode_mode: str = "viterbi",
         prefilter_enabled: bool = False,
@@ -224,6 +225,10 @@ class OPFPIIDetector:
         self.prefilter_skips = 0
         self.hallucinated_drops = 0
         self.parse_failures = 0
+
+        if self.device == "mlx":
+            self._opf = _open_mlx_runtime(self.checkpoint, mlx_bits)
+            return
 
         # opf picks its Triton MoE kernels on any non-CPU device, and macOS has
         # no Triton: on MPS every forward pass would fail. The torch-ops path
@@ -275,6 +280,7 @@ class OPFPIIDetector:
         return cls(
             checkpoint=entry.checkpoint,
             device=opf_cfg.device,
+            mlx_bits=opf_cfg.mlx_bits,
             prefilter_enabled=opf_cfg.prefilter,
             cache_dir=opf_cfg.cache_dir,
             label_map=opf_policy.label_map,
@@ -360,6 +366,34 @@ class OPFPIIDetector:
         # OPF caches its runtime internally; dropping our reference is
         # enough for GC to reclaim it on the next allocation.
         self._opf = None
+
+
+def _open_mlx_runtime(checkpoint: str | None, bits: int | None):
+    """The MLX forward pass over the converted copy of ``checkpoint``; never a CPU fallback."""
+    import platform
+    import sys
+
+    hint = ("device=mlx needs macOS on Apple silicon and the `mlx` extra. "
+            "Install with: pip install -e '.[mlx]'")
+    if sys.platform != "darwin" or platform.machine() != "arm64":
+        raise ImportError(f"{hint} (this host is {sys.platform}/{platform.machine()})")
+    try:
+        import mlx.core  # noqa: F401
+        import mlx_embeddings.models.openai_privacy_filter  # noqa: F401
+    except ImportError as exc:
+        raise ImportError(hint) from exc
+    from .opf_mlx_convert import converted_path, is_current
+
+    if checkpoint is None:
+        raise ValueError("device=mlx needs an explicit OPF checkpoint; run prepare_opf first")
+    source = Path(checkpoint)
+    converted = converted_path(source, bits)
+    if not is_current(source, converted, bits):
+        raise ValueError(f"No current MLX conversion of {source} at {converted}; "
+                         "run prepare_opf(config) before startup")
+    from .opf_mlx import MLXRuntime
+
+    return MLXRuntime(converted, source)
 
 
 def _address_lemma(span_text: str) -> str:

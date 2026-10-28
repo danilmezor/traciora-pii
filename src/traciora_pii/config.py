@@ -48,7 +48,7 @@ from typing import Any
 from collections.abc import Mapping
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from .policies.schemas import VaultCategory
 
@@ -77,9 +77,18 @@ class OPFConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     default_model: str = "base"
     models: dict[str, OPFModelEntry] = Field(default_factory=dict)
-    device: str = "cpu"
+    device: str = "cpu"                  # cpu | cuda | mps | mlx
+    # mlx only: None runs the converted checkpoint in bf16, 8 in 8-bit affine (group 64).
+    mlx_bits: int | None = None
     prefilter: bool = False
     cache_dir: str | None = None
+
+    @field_validator("mlx_bits")
+    @classmethod
+    def _mlx_bits_known(cls, value: int | None) -> int | None:
+        if value not in (None, 8):
+            raise ValueError(f"mlx_bits must be null (bf16) or 8, got {value!r}")
+        return value
 
 
 class LLMConfig(BaseModel):
