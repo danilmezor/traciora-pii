@@ -80,7 +80,7 @@ class MLXRuntime:
         self.model = load_converted(Path(mlx_path))
         if self.model.num_labels != len(ner_class_names):
             raise ValueError(f"Converted checkpoint {mlx_path} has {self.model.num_labels} labels; "
-                             f"{opf_checkpoint} has {len(ner_class_names)}. Run prepare_opf again.")
+                             f"{opf_checkpoint} has {len(ner_class_names)}. Run prepare_second_pass again.")
 
     # ------------------------------------------------------------------
 

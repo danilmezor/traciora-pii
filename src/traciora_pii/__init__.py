@@ -9,7 +9,7 @@ from .pii_virtualizer import PIIVirtualizer, StreamingRefRehydrator
 __all__ = [
     "traciora_config",
     "get_shared_second_pass",
-    "prepare_opf",
+    "prepare_second_pass",
     "scrub",
     "PIIDetector",
     "PIIFinding",
@@ -24,4 +24,4 @@ __all__ = [
     "StreamingRefRehydrator",
 ]
 
-from .runtime import traciora_config, get_shared_second_pass, prepare_opf
+from .runtime import traciora_config, get_shared_second_pass, prepare_second_pass

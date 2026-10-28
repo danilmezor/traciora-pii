@@ -385,12 +385,12 @@ def _open_mlx_runtime(checkpoint: str | None, bits: int | None):
     from .opf_mlx_convert import converted_path, is_current
 
     if checkpoint is None:
-        raise ValueError("device=mlx needs an explicit OPF checkpoint; run prepare_opf first")
+        raise ValueError("device=mlx needs an explicit OPF checkpoint; run prepare_second_pass first")
     source = Path(checkpoint)
     converted = converted_path(source, bits)
     if not is_current(source, converted, bits):
         raise ValueError(f"No current MLX conversion of {source} at {converted}; "
-                         "run prepare_opf(config) before startup")
+                         "run prepare_second_pass(config) before startup")
     from .opf_mlx import MLXRuntime
 
     return MLXRuntime(converted, source)

@@ -82,7 +82,7 @@ def test_detector_mlx_requires_converted_checkpoint(fake_opf, monkeypatch, tmp_p
     source.mkdir()
     (source / "config.json").write_text("{}")
     (source / "model.safetensors").write_bytes(b"weights")
-    with pytest.raises(ValueError, match="prepare_opf"):
+    with pytest.raises(ValueError, match="prepare_second_pass"):
         OPFPIIDetector(checkpoint=str(source), device="mlx", mlx_bits=8, label_map={})
     assert fake_opf.seen == []
     assert "OPF_MOE_TRITON" not in os.environ

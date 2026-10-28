@@ -232,3 +232,30 @@ def test_anonymize_text_propagates_second_pass_failure(vault, scope):
     with pytest.raises(OPFInferenceError, match="boom"):
         returned.append(virtualizer.anonymize_text(scope, text))
     assert returned == []
+
+
+def test_build_second_pass_detector_encoder_mode(monkeypatch):
+    from traciora_pii import runtime
+    from traciora_pii.pii_virtualizer import build_second_pass_detector
+
+    made = []
+
+    class Stub:
+        @classmethod
+        def from_config(cls, encoder_cfg, *, model_name=None):
+            made.append((encoder_cfg, model_name))
+            return cls()
+
+    monkeypatch.setattr("traciora_pii.encoder_pii_detector.EncoderPIIDetector", Stub)
+    config = runtime.traciora_config("de").with_overrides({"detector": {"second_pass": "encoder"}})
+    assert isinstance(build_second_pass_detector(config, encoder_model_name="de"), Stub)
+    assert made == [(config.detector.encoder, "de")]
+
+
+def test_build_second_pass_detector_invalid_mode_lists_all_modes():
+    from traciora_pii.config import PIIConfig
+    from traciora_pii.pii_virtualizer import build_second_pass_detector
+
+    config = PIIConfig().with_overrides({"detector": {"second_pass": "bogus"}})
+    with pytest.raises(ValueError, match="none, opf, encoder, llm, presidio"):
+        build_second_pass_detector(config)

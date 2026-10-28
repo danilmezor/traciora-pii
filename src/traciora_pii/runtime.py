@@ -1,4 +1,4 @@
-"""Explicit Traciora configuration and one process-owned OPF detector."""
+"""Explicit Traciora configuration and one process-owned second-pass detector."""
 from __future__ import annotations
 
 import atexit
@@ -7,10 +7,10 @@ import threading
 from pathlib import Path
 
 from .config import PIIConfig
+from .encoder_checkpoint import ensure_encoder_checkpoint, validate_encoder_checkpoint
 from .policies.loader import load_opf_policy
 
 LANGUAGES = ("en", "de", "ru")
-# One sentence per OPF policy locale; a working second pass finds the name in it.
 _HORIZON = {"checkpoint": "Horizon-Labs/pii-redactor-small",
             "revision": "b9d834a12fc946a53551be95ba20ed9c11e9a553", "family": "horizon"}
 ENCODER_MODELS = {
@@ -21,6 +21,7 @@ ENCODER_MODELS = {
            "description": "Multilingual ModernBERT PII redactor, 29 types (Apache-2.0)."},
     "de": _HORIZON,
 }
+# One sentence per language; a working second pass finds the name in it.
 SELF_CHECK_SENTENCES = {
     "en": "Please call Maria Schneider tomorrow.",
     "de": "Bitte rufen Sie morgen Maria Schneider an.",
@@ -46,6 +47,8 @@ def traciora_config(language: str = "en") -> PIIConfig:
         "encoder": {"default_model": language, "models": {language: ENCODER_MODELS[language]}},
     }})
 
+SECOND_PASS_MODES = ("none", "opf", "encoder")
+
 
 def _cached_checkpoint(config: PIIConfig) -> Path:
     cfg = config.detector.opf
@@ -69,15 +72,30 @@ def validate_checkpoint(path: Path, policy: str) -> None:
                          f"unexpected={sorted(actual-expected)}")
 
 
-def prepare_opf(config: PIIConfig) -> Path | None:
+def _check_mode(config: PIIConfig) -> str:
+    mode = config.detector.second_pass
+    if mode not in SECOND_PASS_MODES:
+        raise ValueError(f"Shared Traciora runtime supports second_pass="
+                         f"{', '.join(SECOND_PASS_MODES)}; got {mode!r}")
+    return mode
+
+
+def prepare_second_pass(config: PIIConfig) -> Path | None:
     """Download only the selected model; call at deployment/startup, never in a request.
 
-    With ``device: mlx`` the checkpoint is also converted to the MLX layout beside
+    ``opf`` with ``device: mlx`` also converts the checkpoint to the MLX layout beside
     itself when that copy is absent or was made from other weights; the converted
-    path is returned.
+    path is returned. ``encoder`` downloads the pinned revision and validates it.
     """
-    if config.detector.second_pass != "opf":
+    mode = _check_mode(config)
+    if mode == "none":
         return None
+    if mode == "encoder":
+        cfg = config.detector.encoder
+        entry = cfg.models[cfg.default_model]
+        path = ensure_encoder_checkpoint(entry, cfg.cache_dir)
+        validate_encoder_checkpoint(path, entry)
+        return path
     from .opf_pii_detector import _resolve_opf_checkpoint
     cfg = config.detector.opf
     entry = cfg.models[cfg.default_model]
@@ -92,7 +110,7 @@ def prepare_opf(config: PIIConfig) -> Path | None:
     return converted
 
 
-class SharedOPFDetector:
+class SharedSecondPass:
     """Serialize inference on a detector borrowed by multiple session virtualizers."""
 
     def __init__(self, detector):
@@ -110,24 +128,24 @@ class SharedOPFDetector:
 
 _lock = threading.Lock()
 _identity: str | None = None
-_shared: SharedOPFDetector | None = None
+_shared: SharedSecondPass | None = None
 _failure: Exception | None = None
 
 
-def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
+def get_shared_second_pass(config: PIIConfig) -> SharedSecondPass | None:
     """Load one selected, already-prefetched model. Never perform network I/O.
 
     A process cannot switch configuration after first use: restart it to change
-    language/model. A second pass that cannot be opened, finds no name on the
+    backend/language/model. A second pass that cannot be opened, finds no name on the
     self-check sentence, or cannot run it raises, and keeps raising until restart
     without retrying the load. There is no regex-only fallback.
     """
     global _identity, _shared, _failure
-    if config.detector.second_pass == "none":
+    mode = _check_mode(config)
+    if mode == "none":
         return None
-    if config.detector.second_pass != "opf":
-        raise ValueError("Shared Traciora runtime supports second_pass=none or opf")
-    identity = config.detector.opf.model_dump_json()
+    section = config.detector.opf if mode == "opf" else config.detector.encoder
+    identity = f"{mode}:{section.model_dump_json()}"
     with _lock:
         if _identity is not None:
             if identity != _identity:
@@ -136,36 +154,44 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
                 raise _failure
             return _shared
         _identity = identity
-        cfg = config.detector.opf
-        entry = cfg.models[cfg.default_model]
-        policy = load_opf_policy(entry.policy)
         try:
-            from .opf_pii_detector import OPFPIIDetector
-            path = _cached_checkpoint(config)
-            validate_checkpoint(path, entry.policy)
-            detector = OPFPIIDetector(checkpoint=str(path), device=cfg.device,
-                                      mlx_bits=cfg.mlx_bits,
-                                      prefilter_enabled=cfg.prefilter,
-                                      label_map=policy.label_map)
+            if mode == "opf":
+                from .opf_pii_detector import OPFPIIDetector
+                entry = section.models[section.default_model]
+                policy = load_opf_policy(entry.policy)
+                path = _cached_checkpoint(config)
+                validate_checkpoint(path, entry.policy)
+                detector = OPFPIIDetector(checkpoint=str(path), device=section.device,
+                                          mlx_bits=section.mlx_bits,
+                                          prefilter_enabled=section.prefilter,
+                                          label_map=policy.label_map)
+                language, name_placeholder = policy.locale, policy.label_map["private_person"]
+                hint = " On mps set OPF_MOE_TRITON=0; on cuda check the Triton build."
+            else:
+                from .encoder_pii_detector import EncoderPIIDetector
+                language, name_placeholder, hint = section.default_model, "[PERSON_NAME]", ""
+                if language not in LANGUAGES:
+                    raise ValueError(f"encoder model {language!r} has no self-check sentence; "
+                                     f"register it under one of {LANGUAGES}")
+                detector = EncoderPIIDetector.from_config(section)
         except Exception as exc:
             _failure = SecondPassUnavailable(
-                f"PII second pass is configured but cannot start (model={cfg.default_model}, "
-                f"device={cfg.device}): {type(exc).__name__}: {exc}. "
+                f"PII second pass is configured but cannot start (model={section.default_model}, "
+                f"device={section.device}): {type(exc).__name__}: {exc}. "
                 f"Prepare the model before startup.")
             raise _failure from exc
         try:
-            name_placeholder = policy.label_map["private_person"]
-            findings = detector.detect(SELF_CHECK_SENTENCES[policy.locale])
+            findings = detector.detect(SELF_CHECK_SENTENCES[language])
             if not any(f.placeholder == name_placeholder for f in findings):
                 raise SecondPassUnavailable(
                     f"PII second pass found nothing on the self-check sentence "
-                    f"(device={cfg.device}, model={cfg.default_model}); the detector cannot "
-                    f"be trusted. On mps set OPF_MOE_TRITON=0; on cuda check the Triton build.")
+                    f"(device={section.device}, model={section.default_model}); the detector "
+                    f"cannot be trusted.{hint}")
         except Exception as exc:
             detector.close()
             _failure = exc
             raise
-        _shared = SharedOPFDetector(detector)
+        _shared = SharedSecondPass(detector)
         return _shared
 
 

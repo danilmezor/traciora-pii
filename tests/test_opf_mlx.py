@@ -65,7 +65,7 @@ def ru_paths(request):
     if not (RU_CHECKPOINT / "model.safetensors").is_file() or not (mlx_path / "source.json").is_file():
         pytest.skip("ru checkpoint and its bf16 MLX conversion are not in the cache")
     if not is_current(RU_CHECKPOINT, mlx_path, None):
-        pytest.skip("the bf16 MLX conversion of ru is stale; run prepare_opf")
+        pytest.skip("the bf16 MLX conversion of ru is stale; run prepare_second_pass")
     if not DATASET.is_file():
         pytest.skip(f"{DATASET} is missing")
     return RU_CHECKPOINT, mlx_path

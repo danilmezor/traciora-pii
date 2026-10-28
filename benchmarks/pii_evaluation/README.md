@@ -181,7 +181,7 @@ Russian passport without a keyword. Routed false positives: 2 each of `[DE_STEUE
 
 The routed row on `device: mlx` (2026-10-27, same Mac, base 628aca5 plus the MLX backend;
 other sessions kept the load average between 7 and 80, so s/query is indicative). The
-same three local fine-tunes, converted by `prepare_opf`, run in 512-token windows with
+same three local fine-tunes, converted by `prepare_second_pass`, run in 512-token windows with
 128 tokens of overlap:
 
 | Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
@@ -205,7 +205,7 @@ row, load average 8-10:
 | db_result | 66,974 | 3,847 | 4,053 |
 | MLX active after load / peak | | 2.61 / 3.33 GiB | 1.39 / 2.11 GiB |
 | phys_footprint peak | | 4.34 GB | 3.64 GB |
-| process start to ready (incl. `prepare_opf` and self-check) | | 12.5 s | 10.3 s |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 12.5 s | 10.3 s |
 
 ## Security stress — archetype 3 (tool-exception leakage)
 

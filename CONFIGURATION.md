@@ -103,8 +103,8 @@ erase copies in other clones, forks, or hosting-provider caches.
 ## Embedding Traciora core
 
 Use `traciora_pii.runtime.traciora_config(language)` with `en`, `de`, or `ru`.
-It selects that language's packaged regex policy and fine-tuned OPF registry
-entry and excludes URLs. It reads no environment or checkout YAML, so it works
+It selects that language's packaged regex policy, its fine-tuned OPF registry
+entry and its encoder registry entry, and excludes URLs. It reads no environment or checkout YAML, so it works
 from an installed wheel and does not interpret the core application's switches.
 Pass the resulting configuration explicitly to `PIIVirtualizer`,
 `PIIRedactor.from_config`, `detect_pii`, `redact_pii_text`, and `assert_model_safe`.
@@ -115,10 +115,10 @@ to `PIIVirtualizer`; `anonymize_content` and `rehydrate_content` then preserve
 the application's block schema. Pass its binary-block predicate as `skip_block`
 to `assert_model_safe`. The package never inspects image contents.
 
-`prepare_opf(config)` downloads and validates only the selected checkpoint at
-startup. `get_shared_second_pass(config)` opens only a prepared local checkpoint,
+`prepare_second_pass(config)` downloads and validates only the selected checkpoint at
+startup; with `second_pass: none` it does nothing. `get_shared_second_pass(config)` opens only a prepared local checkpoint,
 serializes inference, and reuses one detector across session virtualizers. A
-model/configuration change requires a process restart. A configured second pass
+backend/model/configuration change requires a process restart. A configured second pass
 either runs or refuses; there is no regex-only fallback. Once opened, the detector
 runs one self-check sentence in the selected language. If the checkpoint cannot
 be opened, or the self-check finds no name, `get_shared_second_pass` raises
@@ -131,12 +131,25 @@ their own vaults; only process shutdown closes the shared detector.
 On Apple silicon, `detector.opf.device: mlx` runs the OPF forward pass through
 MLX instead of PyTorch; it needs the `mlx` extra (`pip install -e '.[mlx]'`,
 macOS on arm64 only) and fails at construction otherwise, never falling back to
-CPU. `prepare_opf` converts the selected checkpoint once into a sibling
+CPU. `prepare_second_pass` converts the selected checkpoint once into a sibling
 directory in the cache (`<checkpoint>-mlx-bf16`, or `-mlx-8bit` with
 `mlx_bits: 8`) and converts again when the source weights change. The text is
 labelled in 512-token windows with 128 tokens of overlap, and opf's own
 aggregation, Viterbi decoder and span conversion produce the spans. 8-bit
 halves the memory and load time; it is not faster.
+
+`detector.second_pass: encoder` runs a token-classification encoder instead of
+OPF: ruBERT for `ru`, Horizon ModernBERT for `en` and `de`, each pinned to one
+Hugging Face revision in `detector.encoder.models`. It needs the `encoder` extra
+(`pip install -e '.[encoder]'`). `prepare_second_pass` downloads the selected
+checkpoint at its pinned revision into its own cache directory and validates its
+files and labels; `get_shared_second_pass` opens only that local copy, never
+downloads, and runs the same self-check sentence, which must yield a
+`[PERSON_NAME]` finding. It refuses to start when the extra is missing, when the
+checkpoint is absent, incomplete, of another revision or without the family's
+labels, when the self-check finds no name, or when `device: cuda` is set without
+a CUDA build of torch. An inference error propagates from `anonymize_text` like
+OPF's; there is no regex-only fallback.
 
 The package's `scrub` is regex-only and uses a separate logging policy, including
 long-number masking. Conversational category exclusions do not weaken logging.
