@@ -350,6 +350,7 @@ def _resolve_yaml_path(explicit: Path | None) -> Path | None:
 def load_config(yaml_path: Path | None = None) -> PIIConfig:
     """Load and validate the global config.
 
+    Precedence: env vars > ``<stem>.local.yaml`` > the selected YAML > defaults.
     Returns a frozen :class:`PIIConfig`. Use
     :meth:`PIIConfig.with_overrides` for per-call-site
     customization (CLI flags, programmatic profile switches).
@@ -357,11 +358,15 @@ def load_config(yaml_path: Path | None = None) -> PIIConfig:
     _check_removed_env_vars()
     raw: dict[str, Any] = {}
     path = _resolve_yaml_path(yaml_path)
-    if path is not None and path.is_file():
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        if not isinstance(loaded, dict):
-            raise ValueError(f"{path} top-level must be a mapping")
-        raw = loaded
+    if path is not None:
+        # ``<stem>.local.yaml`` beside the selected file is merged over it.
+        for layer in (path, path.with_name(f"{path.stem}.local.yaml")):
+            if not layer.is_file():
+                continue
+            loaded = yaml.safe_load(layer.read_text(encoding="utf-8")) or {}
+            if not isinstance(loaded, dict):
+                raise ValueError(f"{layer} top-level must be a mapping")
+            raw = _deep_merge(raw, loaded)
     # Apply env overrides on top of the YAML.
     for env_var, dotted, kind in _ENV_OVERRIDES:
         raw_val = os.getenv(env_var)

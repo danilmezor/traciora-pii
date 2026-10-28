@@ -16,7 +16,9 @@ The repository configuration is `traciora.yaml`. To use another file, set
 then configuration discovery checks the working directory and package ancestors.
 Individual supported `PII_*` environment overrides take precedence over YAML.
 
-Local overrides can live in `traciora.local.yaml`, which is ignored by Git.
+Local overrides can live in `traciora.local.yaml` (generally `<stem>.local.yaml`
+beside the selected file), which is ignored by Git and deep-merged over that file
+before environment overrides apply: environment > local YAML > YAML > defaults.
 The previous names were `piiv.yaml`, `PIIV_CONFIG`, `PIIVConfig`, and the
 `piiv` import namespace; consumers should migrate to the names above.
 

@@ -3,7 +3,7 @@
 Covers:
   - YAML round-trip (load returns a frozen PIIConfig matching the file)
   - Missing-file fallback to built-in defaults
-  - Env-var override precedence: env > YAML > built-in default
+  - Env-var override precedence: env > local YAML > YAML > built-in default
   - CLI override via ``with_overrides`` returns a new instance, original unchanged
   - Removed env vars surface a clear, actionable RuntimeError
   - OPF model registry: unknown model name raises with the available keys listed
@@ -86,6 +86,25 @@ def test_missing_file_uses_built_in_defaults(monkeypatch, tmp_path):
     assert cfg.detector.second_pass == "none"
     assert cfg.detector.opf.default_model == "base"
     assert cfg.eval.llm.enabled is False
+
+
+def test_load_config_layers_local_yaml(tmp_path, monkeypatch):
+    monkeypatch.delenv("PII_SECOND_PASS", raising=False)
+    (tmp_path / "traciora.yaml").write_text(
+        "detector:\n  second_pass: none\n  opf:\n    device: cpu\n    default_model: base\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "traciora.local.yaml").write_text(
+        "detector:\n  second_pass: opf\n  opf:\n    device: mps\n", encoding="utf-8",
+    )
+    cfg = load_config(tmp_path / "traciora.yaml")
+    assert cfg.detector.second_pass == "opf"
+    assert cfg.detector.opf.device == "mps"
+    # Deep merge: keys the local file does not mention keep the base value.
+    assert cfg.detector.opf.default_model == "base"
+    # Env still beats the local file.
+    monkeypatch.setenv("PII_SECOND_PASS", "none")
+    assert load_config(tmp_path / "traciora.yaml").detector.second_pass == "none"
 
 
 def test_returned_config_is_frozen(yaml_path):
