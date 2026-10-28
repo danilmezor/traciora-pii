@@ -3,7 +3,7 @@ prepare time and validated before the detector opens them."""
 import json
 from pathlib import Path
 
-from .config import EncoderModelEntry
+from .config import EncoderConfig, EncoderModelEntry
 
 FAMILY_LABELS: dict[str, frozenset[str]] = {
     "rubert": frozenset({
@@ -14,6 +14,19 @@ FAMILY_LABELS: dict[str, frozenset[str]] = {
 }
 
 REQUIRED_FILES = ("config.json", "model.safetensors", "tokenizer.json")
+
+
+def registered_entry(encoder_cfg: EncoderConfig, model_name: str | None = None) -> EncoderModelEntry:
+    """The entry for ``model_name`` (default ``default_model``); an unknown key lists the registry."""
+    chosen = model_name or encoder_cfg.default_model
+    if chosen not in encoder_cfg.models:
+        available = ", ".join(sorted(encoder_cfg.models)) or "(none registered)"
+        raise KeyError(
+            f"Encoder model {chosen!r} is not registered in detector.encoder.models. "
+            f"Available: {available}. Add an entry to traciora.yaml or pick one of the "
+            f"existing keys.",
+        )
+    return encoder_cfg.models[chosen]
 
 
 def cached_encoder_path(entry: EncoderModelEntry, cache_dir: str | None) -> Path:
@@ -45,6 +58,9 @@ def validate_encoder_checkpoint(path: Path, entry: EncoderModelEntry) -> None:
         if not (path / name).is_file():
             raise ValueError(f"Encoder checkpoint at {path} is missing {name}")
     source = path / "source.json"
+    if not entry.is_local and not source.is_file():
+        raise ValueError(f"Encoder checkpoint at {path} has no source.json: the download is "
+                         f"incomplete or was never prepared; run prepare_second_pass")
     if source.is_file():
         revision = json.loads(source.read_text()).get("revision")
         if revision != entry.revision:

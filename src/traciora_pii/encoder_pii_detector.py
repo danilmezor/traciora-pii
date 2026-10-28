@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ._detector_common import LLMFinding, normalize_person_lemma
-from .encoder_checkpoint import cached_encoder_path, validate_encoder_checkpoint
+from .encoder_checkpoint import cached_encoder_path, registered_entry, validate_encoder_checkpoint
 
 if TYPE_CHECKING:
     import torch
@@ -166,15 +166,7 @@ class EncoderPIIDetector:
     @classmethod
     def from_config(cls, encoder_cfg: "EncoderConfig", *, model_name: str | None = None) -> "EncoderPIIDetector":
         """Open the cached, validated checkpoint of ``model_name`` (default ``default_model``)."""
-        chosen = model_name or encoder_cfg.default_model
-        if chosen not in encoder_cfg.models:
-            available = ", ".join(sorted(encoder_cfg.models)) or "(none registered)"
-            raise KeyError(
-                f"Encoder model {chosen!r} is not registered in detector.encoder.models. "
-                f"Available: {available}. Add an entry to traciora.yaml or pick one of the "
-                f"existing keys.",
-            )
-        entry = encoder_cfg.models[chosen]
+        entry = registered_entry(encoder_cfg, model_name)
         path = cached_encoder_path(entry, encoder_cfg.cache_dir)
         validate_encoder_checkpoint(path, entry)
         return cls(checkpoint=path, family=entry.family, device=encoder_cfg.device,

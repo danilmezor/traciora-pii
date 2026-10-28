@@ -145,9 +145,11 @@ Hugging Face revision in `detector.encoder.models`. It needs the `encoder` extra
 checkpoint at its pinned revision into its own cache directory and validates its
 files and labels; `get_shared_second_pass` opens only that local copy, never
 downloads, and runs the same self-check sentence, which must yield a
-`[PERSON_NAME]` finding. It refuses to start when the extra is missing, when the
-checkpoint is absent, incomplete, of another revision or without the family's
-labels, when the self-check finds no name, or when `device: cuda` is set without
+`[PERSON_NAME]` finding. For the shared runtime the registry key names the
+language, `en`, `de` or `ru`, because the self-check sentence is chosen by that
+key; a key such as `ru-local` is refused. It also refuses to start when the
+extra is missing, when the checkpoint is absent, incomplete, of another revision
+or without the family's labels, when the self-check finds no name, or when `device: cuda` is set without
 a CUDA build of torch. An inference error propagates from `anonymize_text` like
 OPF's; there is no regex-only fallback.
 

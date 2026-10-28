@@ -151,6 +151,38 @@ def test_padding_does_not_change_labels(tiny_detector):
         assert (together - alone).abs().max().item() < 1e-5
 
 
+def test_seam_token_takes_the_later_window_once_strictly_farther_from_its_inner_edge(
+        tiny_detector, monkeypatch):
+    torch = pytest.importorskip("torch")
+    labels = tiny_detector._labels
+    window_labels = ["CITY", "COUNTRY", "DISTRICT"]
+
+    def constant_window_probs(ids, bounds):
+        probs = []
+        for k, (start, end) in enumerate(bounds):
+            window = torch.zeros((end - start, len(labels)))
+            window[:, labels.index(f"I-{window_labels[k]}")] = 1.0
+            probs.append(window)
+        return probs
+
+    monkeypatch.setattr(tiny_detector, "_window_probs", constant_window_probs)
+    text = "склад " * 1000
+    assert len(tiny_detector._tokenizer(text, add_special_tokens=False)["input_ids"]) == 1000
+    assert window_bounds(1000) == [(0, 510), (382, 892), (764, 1000)]
+
+    # Seam 1|2: window 1 is 509 - i from its right edge, window 2 is i - 382 from its left;
+    # 445 stays in window 1 (64 vs 63), 446 moves to window 2 (63 vs 64).
+    # Seam 2|3: window 3 ends the document, so only its left edge counts; 828 moves (64 vs 63).
+    # The document's first and last tokens sit at distance 0 from a window edge, but document
+    # ends are not edges: token 0 keeps window 1 and token 999 keeps window 3.
+    def chars(first, last):
+        return 6 * first, 6 * last + 5
+
+    fragments = tiny_detector._fragments(text)
+    assert [(f.label, f.start, f.end) for f in fragments] == [
+        ("CITY", *chars(0, 445)), ("COUNTRY", *chars(446, 827)), ("DISTRICT", *chars(828, 999))]
+
+
 def test_forward_failure_raises_inference_error(tiny_checkpoint, monkeypatch):
     detector = EncoderPIIDetector(checkpoint=tiny_checkpoint, family="rubert")
     monkeypatch.setattr(detector, "_model", _FailingModel())

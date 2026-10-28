@@ -96,8 +96,8 @@ class EncoderModelEntry(BaseModel):
     """One encoder token classifier registered for selection by name.
 
     ``checkpoint`` is a HuggingFace repo id (``org/name``) pinned by a
-    40-hex ``revision``, or a local path (absolute, ``~``, ``.``, or an
-    existing directory) that needs no revision. ``family`` names the
+    40-hex ``revision``, or a local path that needs no revision, told by its
+    leading ``/``, ``~`` or ``.`` (a relative directory is written ``./dir``). ``family`` names the
     label scheme the detector reads from the classifier head.
     """
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -115,7 +115,7 @@ class EncoderModelEntry(BaseModel):
 
     @property
     def is_local(self) -> bool:
-        return self.checkpoint.startswith(("/", "~", ".")) or Path(self.checkpoint).is_dir()
+        return self.checkpoint.startswith(("/", "~", "."))
 
     @model_validator(mode="after")
     def _repo_id_pinned(self) -> "EncoderModelEntry":

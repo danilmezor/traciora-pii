@@ -82,6 +82,7 @@ def test_validate_rejects_missing_file_wrong_revision_and_missing_labels(tmp_pat
 
     missing_label = tmp_path / "labels"
     _write_checkpoint(missing_label, FAMILY_LABELS["rubert"] - {"B-CITY"})
+    (missing_label / "source.json").write_text(json.dumps({"repo": "org/model", "revision": REVISION}))
     with pytest.raises(ValueError, match=r"label.*B-CITY"):
         validate_encoder_checkpoint(missing_label, _entry(family="rubert"))
 
@@ -94,3 +95,13 @@ def test_local_path_passes_through_without_download(tmp_path, fake_download):
     assert ensure_encoder_checkpoint(entry, str(tmp_path / "cache")) == local
     assert fake_download == []
     validate_encoder_checkpoint(local, entry)
+
+
+def test_repo_id_checkpoint_without_ready_marker_is_refused(tmp_path):
+    unprepared = tmp_path / "unprepared"
+    _write_checkpoint(unprepared, FAMILY_LABELS["horizon"])
+    with pytest.raises(ValueError, match="source.json") as excinfo:
+        validate_encoder_checkpoint(unprepared, _entry())
+    assert str(unprepared) in str(excinfo.value) and "prepare_second_pass" in str(excinfo.value)
+
+    validate_encoder_checkpoint(unprepared, EncoderModelEntry(checkpoint=str(unprepared), family="horizon"))

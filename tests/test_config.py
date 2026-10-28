@@ -293,12 +293,15 @@ def test_encoder_entry_requires_revision_for_repo_id():
     assert entry.revision == "b9d834a12fc946a53551be95ba20ed9c11e9a553"
 
 
-def test_encoder_entry_accepts_local_path_without_revision(tmp_path):
+def test_encoder_entry_local_by_syntax_not_by_current_directory(tmp_path, monkeypatch):
     for checkpoint in ("/opt/models/rubert", "~/models/rubert", "./models/rubert"):
-        assert EncoderModelEntry(checkpoint=checkpoint, family="rubert").revision is None
+        entry = EncoderModelEntry(checkpoint=checkpoint, family="rubert")
+        assert entry.is_local and entry.revision is None
     (tmp_path / "org" / "name").mkdir(parents=True)
-    existing = str(tmp_path / "org" / "name")
-    assert EncoderModelEntry(checkpoint=existing, family="rubert").revision is None
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValidationError, match="repo id"):
+        EncoderModelEntry(checkpoint="org/name", family="rubert")
+    assert EncoderModelEntry(checkpoint="./org/name", family="rubert").is_local
 
 
 def test_encoder_family_and_device_are_closed():

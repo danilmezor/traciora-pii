@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 
 from .config import PIIConfig
-from .encoder_checkpoint import ensure_encoder_checkpoint, validate_encoder_checkpoint
+from .encoder_checkpoint import ensure_encoder_checkpoint, registered_entry, validate_encoder_checkpoint
 from .policies.loader import load_opf_policy
 
 LANGUAGES = ("en", "de", "ru")
@@ -92,7 +92,7 @@ def prepare_second_pass(config: PIIConfig) -> Path | None:
         return None
     if mode == "encoder":
         cfg = config.detector.encoder
-        entry = cfg.models[cfg.default_model]
+        entry = registered_entry(cfg)
         path = ensure_encoder_checkpoint(entry, cfg.cache_dir)
         validate_encoder_checkpoint(path, entry)
         return path
