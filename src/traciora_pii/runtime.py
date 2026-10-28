@@ -12,6 +12,16 @@ from .policies.loader import load_opf_policy
 
 logger = logging.getLogger(__name__)
 LANGUAGES = ("en", "de", "ru")
+# One sentence per OPF policy locale; a working second pass finds the name in it.
+SELF_CHECK_SENTENCES = {
+    "en": "Please call Maria Schneider tomorrow.",
+    "de": "Bitte rufen Sie morgen Maria Schneider an.",
+    "ru": "Пожалуйста, позвоните завтра Марии Шнайдер.",
+}
+
+
+class SecondPassUnavailable(RuntimeError):
+    """The configured second pass runs but finds no name on the self-check sentence."""
 
 
 def traciora_config(language: str = "en") -> PIIConfig:
@@ -81,15 +91,18 @@ class SharedOPFDetector:
 _lock = threading.Lock()
 _identity: str | None = None
 _shared: SharedOPFDetector | None = None
+_failure: Exception | None = None
 
 
 def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
     """Load one selected, already-prefetched model. Never perform network I/O.
 
     A process cannot switch configuration after first use: restart it to change
-    language/model. Failed initialization is remembered to avoid retrying each turn.
+    language/model. A checkpoint that cannot be opened is remembered as regex-only
+    to avoid retrying each turn. A model that opens but finds no name on the
+    self-check sentence (or cannot run it) raises, and keeps raising until restart.
     """
-    global _identity, _shared
+    global _identity, _shared, _failure
     if config.detector.second_pass == "none":
         return None
     if config.detector.second_pass != "opf":
@@ -99,32 +112,49 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
         if _identity is not None:
             if identity != _identity:
                 raise RuntimeError("PII model configuration changed; restart the process")
+            if _failure is not None:
+                raise _failure
             return _shared
         _identity = identity
+        cfg = config.detector.opf
+        entry = cfg.models[cfg.default_model]
+        policy = load_opf_policy(entry.policy)
         try:
             from .opf_pii_detector import OPFPIIDetector
-            cfg = config.detector.opf
-            entry = cfg.models[cfg.default_model]
             path = _cached_checkpoint(config)
             validate_checkpoint(path, entry.policy)
             detector = OPFPIIDetector(checkpoint=str(path), device=cfg.device,
                                       prefilter_enabled=cfg.prefilter,
-                                      label_map=load_opf_policy(entry.policy).label_map)
-            _shared = SharedOPFDetector(detector)
+                                      label_map=policy.label_map)
         except Exception as exc:  # noqa: BLE001 - optional backend fallback
             logger.warning("OPF unavailable; using regex-only masking. Prepare the selected "
                            "model before startup. error_type=%s", type(exc).__name__)
+            return None
+        try:
+            name_placeholder = policy.label_map["private_person"]
+            findings = detector.detect(SELF_CHECK_SENTENCES[policy.locale])
+            if not any(f.placeholder == name_placeholder for f in findings):
+                raise SecondPassUnavailable(
+                    f"PII second pass found nothing on the self-check sentence "
+                    f"(device={cfg.device}, model={cfg.default_model}); the detector cannot "
+                    f"be trusted. On mps set OPF_MOE_TRITON=0; on cuda check the Triton build.")
+        except Exception as exc:
+            detector.close()
+            _failure = exc
+            raise
+        _shared = SharedOPFDetector(detector)
         return _shared
 
 
 def close_shared_second_pass() -> None:
     """Release the process-owned detector at shutdown (also useful for isolated tests)."""
-    global _identity, _shared
+    global _identity, _shared, _failure
     with _lock:
         if _shared is not None:
             _shared.close()
         _shared = None
         _identity = None
+        _failure = None
 
 
 atexit.register(close_shared_second_pass)

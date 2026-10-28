@@ -7,6 +7,7 @@ import pytest
 from cryptography.fernet import Fernet
 
 from traciora_pii import PIIVaultStore, PIIVirtualizer, detect_pii, runtime, scrub
+from traciora_pii._detector_common import LLMFinding
 from traciora_pii.pii_leak_guard import PIILeakError, assert_model_safe
 from traciora_pii.policies.loader import load_opf_policy
 from traciora_pii.redaction import PIIRedactor
@@ -74,7 +75,7 @@ def test_one_shared_model_and_serialized_inference(monkeypatch, tmp_path):
             assert self.active == 1
             time.sleep(.002)
             self.active -= 1
-            return []
+            return [LLMFinding("opf", 0, 4, "[PERSON_NAME]", "maria")]
         def close(self):
             self.closed = True
     monkeypatch.setattr("traciora_pii.opf_pii_detector.OPFPIIDetector", FakeOPF)
@@ -102,6 +103,81 @@ def test_missing_checkpoint_never_downloads_and_failure_is_cached(monkeypatch, t
     try:
         assert runtime.get_shared_second_pass(config) is None
         assert runtime.get_shared_second_pass(config) is None
+    finally:
+        runtime.close_shared_second_pass()
+
+
+class SelfCheckOPF:
+    findings: list = []
+    seen: list = []
+
+    def __init__(self, **kwargs):
+        self.closed = False
+
+    def detect(self, text):
+        SelfCheckOPF.seen.append(text)
+        return list(SelfCheckOPF.findings)
+
+    def close(self):
+        self.closed = True
+
+
+def opf_config(tmp_path, language):
+    config = runtime.traciora_config(language).with_overrides({"detector": {
+        "second_pass": "opf", "opf": {"cache_dir": str(tmp_path), "device": "mps"}}})
+    checkpoint(tmp_path, config)
+    return config
+
+
+def test_shared_second_pass_refuses_empty_self_check(monkeypatch, tmp_path):
+    runtime.close_shared_second_pass()
+    config = opf_config(tmp_path, "ru")
+    monkeypatch.setattr(SelfCheckOPF, "findings", [])
+    monkeypatch.setattr(SelfCheckOPF, "seen", [])
+    monkeypatch.setattr("traciora_pii.opf_pii_detector.OPFPIIDetector", SelfCheckOPF)
+    try:
+        with pytest.raises(runtime.SecondPassUnavailable) as excinfo:
+            runtime.get_shared_second_pass(config)
+        message = str(excinfo.value)
+        assert "device=mps" in message and "model=ru" in message
+        assert "OPF_MOE_TRITON=0" in message
+        assert SelfCheckOPF.seen == [runtime.SELF_CHECK_SENTENCES["ru"]]
+        # The refusal is remembered: a later turn raises again instead of masking regex-only.
+        with pytest.raises(runtime.SecondPassUnavailable):
+            runtime.get_shared_second_pass(config)
+        assert len(SelfCheckOPF.seen) == 1
+    finally:
+        runtime.close_shared_second_pass()
+
+
+def test_shared_second_pass_accepts_name_finding(monkeypatch, tmp_path):
+    runtime.close_shared_second_pass()
+    config = opf_config(tmp_path, "de")
+    monkeypatch.setattr(SelfCheckOPF, "findings",
+                        [LLMFinding("opf", 30, 45, "[PERSON_NAME]", "maria schneider")])
+    monkeypatch.setattr(SelfCheckOPF, "seen", [])
+    monkeypatch.setattr("traciora_pii.opf_pii_detector.OPFPIIDetector", SelfCheckOPF)
+    try:
+        shared = runtime.get_shared_second_pass(config)
+        assert isinstance(shared, runtime.SharedOPFDetector)
+        assert SelfCheckOPF.seen == [runtime.SELF_CHECK_SENTENCES["de"]]
+    finally:
+        runtime.close_shared_second_pass()
+
+
+def test_self_check_inference_error_propagates(monkeypatch, tmp_path):
+    from traciora_pii.opf_pii_detector import OPFInferenceError
+    runtime.close_shared_second_pass()
+    config = opf_config(tmp_path, "en")
+
+    class Broken(SelfCheckOPF):
+        def detect(self, text):
+            raise OPFInferenceError("OPF inference failed on device=mps: ModuleNotFoundError: triton")
+
+    monkeypatch.setattr("traciora_pii.opf_pii_detector.OPFPIIDetector", Broken)
+    try:
+        with pytest.raises(OPFInferenceError, match="triton"):
+            runtime.get_shared_second_pass(config)
     finally:
         runtime.close_shared_second_pass()
 

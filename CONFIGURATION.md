@@ -116,8 +116,11 @@ to `assert_model_safe`. The package never inspects image contents.
 `prepare_opf(config)` downloads and validates only the selected checkpoint at
 startup. `get_shared_second_pass(config)` opens only a prepared local checkpoint,
 serializes inference, and reuses one detector across session virtualizers. A
-model/configuration change requires a process restart. If initialization fails,
-regex-only fallback is logged and cached until restart. Session owners close
+model/configuration change requires a process restart. If the checkpoint cannot
+be opened, regex-only fallback is logged and cached until restart. Once opened,
+the detector runs one self-check sentence in the selected language; if it finds
+no name there, or inference fails, `get_shared_second_pass` raises
+`SecondPassUnavailable` (or the inference error) on every call until restart. Session owners close
 their own vaults; only process shutdown closes the shared detector.
 
 The package's `scrub` is regex-only and uses a separate logging policy, including
