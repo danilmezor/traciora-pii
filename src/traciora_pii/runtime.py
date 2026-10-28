@@ -3,14 +3,12 @@ from __future__ import annotations
 
 import atexit
 import json
-import logging
 import threading
 from pathlib import Path
 
 from .config import PIIConfig
 from .policies.loader import load_opf_policy
 
-logger = logging.getLogger(__name__)
 LANGUAGES = ("en", "de", "ru")
 # One sentence per OPF policy locale; a working second pass finds the name in it.
 SELF_CHECK_SENTENCES = {
@@ -21,7 +19,7 @@ SELF_CHECK_SENTENCES = {
 
 
 class SecondPassUnavailable(RuntimeError):
-    """The configured second pass runs but finds no name on the self-check sentence."""
+    """The configured second pass cannot start or finds no name on the self-check sentence."""
 
 
 def traciora_config(language: str = "en") -> PIIConfig:
@@ -98,9 +96,9 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
     """Load one selected, already-prefetched model. Never perform network I/O.
 
     A process cannot switch configuration after first use: restart it to change
-    language/model. A checkpoint that cannot be opened is remembered as regex-only
-    to avoid retrying each turn. A model that opens but finds no name on the
-    self-check sentence (or cannot run it) raises, and keeps raising until restart.
+    language/model. A second pass that cannot be opened, finds no name on the
+    self-check sentence, or cannot run it raises, and keeps raising until restart
+    without retrying the load. There is no regex-only fallback.
     """
     global _identity, _shared, _failure
     if config.detector.second_pass == "none":
@@ -126,10 +124,12 @@ def get_shared_second_pass(config: PIIConfig) -> SharedOPFDetector | None:
             detector = OPFPIIDetector(checkpoint=str(path), device=cfg.device,
                                       prefilter_enabled=cfg.prefilter,
                                       label_map=policy.label_map)
-        except Exception as exc:  # noqa: BLE001 - optional backend fallback
-            logger.warning("OPF unavailable; using regex-only masking. Prepare the selected "
-                           "model before startup. error_type=%s", type(exc).__name__)
-            return None
+        except Exception as exc:
+            _failure = SecondPassUnavailable(
+                f"PII second pass is configured but cannot start (model={cfg.default_model}, "
+                f"device={cfg.device}): {type(exc).__name__}: {exc}. "
+                f"Prepare the model before startup.")
+            raise _failure from exc
         try:
             name_placeholder = policy.label_map["private_person"]
             findings = detector.detect(SELF_CHECK_SENTENCES[policy.locale])

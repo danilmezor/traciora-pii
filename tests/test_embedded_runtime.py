@@ -100,9 +100,21 @@ def test_missing_checkpoint_never_downloads_and_failure_is_cached(monkeypatch, t
         "second_pass": "opf", "opf": {"cache_dir": str(tmp_path)}}})
     monkeypatch.setattr("traciora_pii.opf_pii_detector._resolve_opf_checkpoint",
                         lambda *a, **k: pytest.fail("request attempted a download"))
+    loads = []
+    real_validate = runtime.validate_checkpoint
+    monkeypatch.setattr(runtime, "validate_checkpoint",
+                        lambda *a: (loads.append(a), real_validate(*a)))
     try:
-        assert runtime.get_shared_second_pass(config) is None
-        assert runtime.get_shared_second_pass(config) is None
+        with pytest.raises(runtime.SecondPassUnavailable) as excinfo:
+            runtime.get_shared_second_pass(config)
+        message = str(excinfo.value)
+        assert "configured but cannot start" in message
+        assert "model=ru" in message and "device=cpu" in message
+        assert "ValueError" in message and "Prepare the model before startup" in message
+        assert isinstance(excinfo.value.__cause__, ValueError)
+        with pytest.raises(runtime.SecondPassUnavailable):
+            runtime.get_shared_second_pass(config)
+        assert len(loads) == 1
     finally:
         runtime.close_shared_second_pass()
 
