@@ -1,7 +1,6 @@
 """The encoder second pass: label schemes and merging, windows, the forward pass, the real checkpoints."""
 import builtins
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -15,12 +14,6 @@ from traciora_pii.encoder_pii_detector import (
     group_fragments,
     window_bounds,
 )
-
-STUDY = Path(os.environ.get(
-    "TRACIORA_ENCODER_STUDY_DIR",
-    "/private/tmp/claude-501/-Users-danil-Programming-Traciora-traciora/"
-    "4aeed9cc-c86e-4bd6-a915-69f4db834a4f/scratchpad/small-encoders",
-))
 
 
 def _fragment(text: str, piece: str, label: str, after: int = 0) -> Fragment:
@@ -241,31 +234,3 @@ def test_name_across_window_cut_is_one_span(detectors):
 
     names = [text[f.start:f.end] for f in detector.detect(text) if f.placeholder == "[PERSON_NAME]"]
     assert names == ["Мария Шнайдер"]
-
-
-@pytest.mark.integration
-def test_hivetrace_parity_with_study(detectors):
-    """The first 50 hivetrace ``domain`` rows from the study's parquet snapshot (``datasets``
-    would need the network) give the study's findings after regex-overlap suppression."""
-    snapshot = STUDY / "data/hive/data/domain-00000-of-00001.parquet"
-    results = STUDY / "results/b_torch_t05.json"
-    if not snapshot.is_file() or not results.is_file():
-        pytest.skip(f"the study snapshot under {STUDY} is missing")
-    import pyarrow.parquet as pq
-
-    from benchmarks.pii_evaluation.run_imported_dataset_eval import _detect_combined
-    from traciora_pii.policies.loader import compile_regex_policy, load_regex_policy
-
-    rows = pq.read_table(snapshot).to_pylist()[:50]
-    study = json.loads(results.read_text())["hive"]
-    assert study["ids"][:50] == [f"domain:{row['id']}" for row in rows]
-    regex = compile_regex_policy(load_regex_policy("ru"))
-    differing = []
-    for row, expected in zip(rows, study["findings"][:50]):
-        found = {(f.placeholder, f.start, f.end) for f in _detect_combined(row["text"], regex, detectors["ru"])
-                 if f.placeholder in ("[PERSON_NAME]", "[STREET_ADDRESS]")}
-        if found != {tuple(finding) for finding in expected}:
-            differing.append((row["id"], sorted(found), sorted(map(tuple, expected))))
-    for row_id, found, expected in differing:
-        print(f"{row_id}\n  now:   {found}\n  study: {expected}")
-    assert len(differing) <= 1

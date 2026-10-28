@@ -154,8 +154,9 @@ class EncoderPIIDetector:
         self.parse_failures = 0
 
         self._torch = torch
-        self._tokenizer = AutoTokenizer.from_pretrained(checkpoint)
-        model = AutoModelForTokenClassification.from_pretrained(checkpoint, dtype=torch.float32)
+        self._tokenizer = AutoTokenizer.from_pretrained(checkpoint, local_files_only=True)
+        model = AutoModelForTokenClassification.from_pretrained(
+            checkpoint, dtype=torch.float32, local_files_only=True)
         self._model = (model.to("cuda").half() if device == "cuda" else model).eval()
         self._labels = [model.config.id2label[i] for i in range(model.config.num_labels)]
         tok = self._tokenizer
