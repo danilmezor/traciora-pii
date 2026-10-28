@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class OPFInferenceError(RuntimeError):
+    """The OPF model could not run on a text; the second pass has no answer."""
+
+
 def _resolve_opf_checkpoint(checkpoint: str | None, *, cache_dir: str | None = None) -> str | None:
     """Resolve a checkpoint string to a local path.
 
@@ -221,6 +225,16 @@ class OPFPIIDetector:
         self.hallucinated_drops = 0
         self.parse_failures = 0
 
+        # opf picks its Triton MoE kernels on any non-CPU device, and macOS has
+        # no Triton: on MPS every forward pass would fail. The torch-ops path
+        # runs there, so it is the default unless the caller chose explicitly.
+        if self.device == "mps":
+            os.environ.setdefault("OPF_MOE_TRITON", "0")
+        moe_triton = os.environ.get("OPF_MOE_TRITON")
+        use_triton = (moe_triton.strip().lower() in {"1", "true", "yes", "on"}
+                      if moe_triton is not None else self.device != "cpu")
+        logger.info("OPF MoE path on device=%s: %s", self.device,
+                    "triton" if use_triton else "torch-ops")
         self._opf = OPF(
             model=self.checkpoint,
             device=self.device,
@@ -275,6 +289,8 @@ class OPFPIIDetector:
 
         Empty list is a valid and frequent answer. All other OPF labels
         are dropped: the regex layer has already tokenized those types.
+        Raises :class:`OPFInferenceError` when the model cannot run, so a
+        failed pass is never mistaken for a text without names.
         """
         if not text:
             return []
@@ -286,13 +302,10 @@ class OPFPIIDetector:
         self.lm_calls += 1
         try:
             result = self._opf.redact(text)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "OPFPIIDetector inference failed; returning empty findings. error_type=%s exc=%s",
-                type(exc).__name__,
-                exc,
-            )
-            return []
+        except Exception as exc:
+            raise OPFInferenceError(
+                f"OPF inference failed on device={self.device}: {type(exc).__name__}: {exc}",
+            ) from exc
 
         # ``OPF.redact`` returns a ``RedactionResult`` when
         # ``output_text_only`` is False (our default). In the text-only

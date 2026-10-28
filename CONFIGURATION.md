@@ -16,7 +16,9 @@ The repository configuration is `traciora.yaml`. To use another file, set
 then configuration discovery checks the working directory and package ancestors.
 Individual supported `PII_*` environment overrides take precedence over YAML.
 
-Local overrides can live in `traciora.local.yaml`, which is ignored by Git.
+Local overrides can live in `traciora.local.yaml` (generally `<stem>.local.yaml`
+beside the selected file), which is ignored by Git and deep-merged over that file
+before environment overrides apply: environment > local YAML > YAML > defaults.
 The previous names were `piiv.yaml`, `PIIV_CONFIG`, `PIIVConfig`, and the
 `piiv` import namespace; consumers should migrate to the names above.
 
@@ -116,8 +118,12 @@ to `assert_model_safe`. The package never inspects image contents.
 `prepare_opf(config)` downloads and validates only the selected checkpoint at
 startup. `get_shared_second_pass(config)` opens only a prepared local checkpoint,
 serializes inference, and reuses one detector across session virtualizers. A
-model/configuration change requires a process restart. If initialization fails,
-regex-only fallback is logged and cached until restart. Session owners close
+model/configuration change requires a process restart. A configured second pass
+either runs or refuses; there is no regex-only fallback. Once opened, the detector
+runs one self-check sentence in the selected language. If the checkpoint cannot
+be opened, or the self-check finds no name, `get_shared_second_pass` raises
+`SecondPassUnavailable`; if inference fails, it raises the inference error. It
+raises again on every call until restart, without retrying the load. Session owners close
 their own vaults; only process shutdown closes the shared detector.
 
 The package's `scrub` is regex-only and uses a separate logging policy, including
