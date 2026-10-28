@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class OPFInferenceError(RuntimeError):
+    """The OPF model could not run on a text; the second pass has no answer."""
+
+
 def _resolve_opf_checkpoint(checkpoint: str | None, *, cache_dir: str | None = None) -> str | None:
     """Resolve a checkpoint string to a local path.
 
@@ -275,6 +279,8 @@ class OPFPIIDetector:
 
         Empty list is a valid and frequent answer. All other OPF labels
         are dropped: the regex layer has already tokenized those types.
+        Raises :class:`OPFInferenceError` when the model cannot run, so a
+        failed pass is never mistaken for a text without names.
         """
         if not text:
             return []
@@ -286,13 +292,10 @@ class OPFPIIDetector:
         self.lm_calls += 1
         try:
             result = self._opf.redact(text)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "OPFPIIDetector inference failed; returning empty findings. error_type=%s exc=%s",
-                type(exc).__name__,
-                exc,
-            )
-            return []
+        except Exception as exc:
+            raise OPFInferenceError(
+                f"OPF inference failed on device={self.device}: {type(exc).__name__}: {exc}",
+            ) from exc
 
         # ``OPF.redact`` returns a ``RedactionResult`` when
         # ``output_text_only`` is False (our default). In the text-only
