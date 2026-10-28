@@ -25,6 +25,12 @@ opf = [
   "pymorphy3",
   "opf @ git+https://github.com/openai/privacy-filter.git@f7f00ca7fb869683eb732c010299d901457f19c3",
 ]
+encoder = [
+  "torch>=2.1",
+  "transformers>=4.48",
+  "huggingface_hub",
+  "pymorphy3",
+]
 mlx = [
   "pymorphy3",
   "opf @ git+https://github.com/openai/privacy-filter.git@f7f00ca7fb869683eb732c010299d901457f19c3",

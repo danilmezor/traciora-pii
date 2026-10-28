@@ -113,10 +113,13 @@ class EncoderModelEntry(BaseModel):
             raise ValueError(f"family must be rubert or horizon, got {value!r}")
         return value
 
+    @property
+    def is_local(self) -> bool:
+        return self.checkpoint.startswith(("/", "~", ".")) or Path(self.checkpoint).is_dir()
+
     @model_validator(mode="after")
     def _repo_id_pinned(self) -> "EncoderModelEntry":
-        local = self.checkpoint.startswith(("/", "~", ".")) or Path(self.checkpoint).is_dir()
-        if not local and not re.fullmatch(r"[0-9a-f]{40}", self.revision or ""):
+        if not self.is_local and not re.fullmatch(r"[0-9a-f]{40}", self.revision or ""):
             raise ValueError(
                 f"checkpoint {self.checkpoint!r} is a repo id; revision must be a "
                 f"40-hex commit, got {self.revision!r}"
