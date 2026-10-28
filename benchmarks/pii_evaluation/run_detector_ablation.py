@@ -17,9 +17,9 @@ Configurations
                             supplied via ``--detector-llm-model``.
   5. ``regex_presidio``   — regex + Microsoft Presidio (third-party baseline).
 
-Configurations whose dependencies are unavailable (extras not installed,
-LLM unreachable, --detector-llm-model not set) are reported with
-``status="skipped: <reason>"`` rather than dropped silently.
+A configuration whose detector cannot be constructed (extra not installed,
+checkpoint missing, --detector-llm-model not set) is reported with
+``status="error: <exception>"`` rather than dropped silently.
 
 Usage
 -----
@@ -191,9 +191,10 @@ def _run_one(
             opf_choice = _resolve_routed_opf(base_config, lang)
             row.routing_decisions[lang] = opf_choice
             cfg = _config_for_spec(spec, base_config, lang)
-            detector = build_second_pass_detector(cfg, opf_model_name=opf_choice)
-            if detector is None:
-                row.status = "skipped: routed OPF unavailable for at least one language"
+            try:
+                detector = build_second_pass_detector(cfg, opf_model_name=opf_choice)
+            except Exception as exc:  # noqa: BLE001 — reported as an error row
+                row.status = f"error: {type(exc).__name__}: {exc} (language={lang})"
                 row.total_s = time.perf_counter() - t0
                 return row
             try:
@@ -218,9 +219,10 @@ def _run_one(
     opf_choice = spec.opf_model if spec.second_pass == "opf" else None
     recorder.reset()
     t0 = time.perf_counter()
-    detector = build_second_pass_detector(cfg, opf_model_name=opf_choice)
-    if detector is None:
-        row.status = f"skipped: {spec.second_pass} backend unavailable (extra not installed or unreachable)"
+    try:
+        detector = build_second_pass_detector(cfg, opf_model_name=opf_choice)
+    except Exception as exc:  # noqa: BLE001 — reported as an error row
+        row.status = f"error: {type(exc).__name__}: {exc}"
         row.total_s = time.perf_counter() - t0
         return row
     try:
@@ -228,7 +230,7 @@ def _run_one(
             dataset, second_pass_detector=detector,
         )
     except Exception as exc:  # noqa: BLE001
-        row.status = f"skipped: {type(exc).__name__}: {exc}"
+        row.status = f"error: {type(exc).__name__}: {exc}"
         row.total_s = time.perf_counter() - t0
         return row
     finally:
@@ -313,7 +315,7 @@ def _bootstrap_macro_micro_for_row(
     n_resamples: int,
 ) -> Optional[Dict[str, CIResult]]:
     """Return CIs for macro P, macro R, micro P, micro R. Returns None when
-    per-query records aren't available (e.g. a skipped row)."""
+    per-query records aren't available (e.g. an error row)."""
     if not row.per_query_records:
         return None
     macro_p_ci = bootstrap_ci(row.per_query_records, _macro_p_from_records, n_resamples=n_resamples)
@@ -345,8 +347,8 @@ def _write_markdown(
     lines.append(
         "\n_Total seconds is wall-clock time inside "
         "``metrics.detection_precision_recall_with_records``. "
-        "Skipped rows mean the optional dependency was missing or the backend "
-        "was unreachable — see ``status``. P/R cells carry 95% bootstrap CIs "
+        "Error rows mean the detector could not be constructed or the run "
+        "failed — see ``status``. P/R cells carry 95% bootstrap CIs "
         f"({n_resamples} resamples, seed=42) when per-query records are "
         "available._\n"
     )

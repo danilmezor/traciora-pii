@@ -130,11 +130,16 @@ class MLXRuntime:
         return summed
 
     def token_labels(self, token_ids: list[int]) -> list[int]:
-        """Viterbi-decoded label index per token."""
+        """Viterbi-decoded label index per token.
+
+        opf's predict_text silently swaps in argmax when the decoder's length is
+        off; here that decoder fault raises instead of degrading the labels.
+        """
         scores = self.token_log_probs(token_ids)
         labels = self.decoder.decode(scores)
         if len(labels) != len(token_ids):
-            labels = scores.argmax(dim=1).tolist()
+            raise RuntimeError(f"Viterbi decoder returned {len(labels)} labels "
+                               f"for {len(token_ids)} tokens")
         return [int(label) for label in labels]
 
     @torch.inference_mode()

@@ -53,14 +53,12 @@ def test_regex_only_row_matches_metrics_detection_pr(synthetic_dataset):
     assert row.n_queries == len(synthetic_dataset)
 
 
-def test_skipped_when_dependency_unavailable_returns_status_row(
-    monkeypatch, synthetic_dataset,
-):
-    monkeypatch.setattr(
-        run_detector_ablation,
-        "build_second_pass_detector",
-        lambda *a, **kw: None,
-    )
+def _broken_build(*args, **kwargs):
+    raise RuntimeError("opf checkpoint not found")
+
+
+def test_failed_construction_returns_error_row(monkeypatch, synthetic_dataset):
+    monkeypatch.setattr(run_detector_ablation, "build_second_pass_detector", _broken_build)
     base_config = load_config()
     spec = run_detector_ablation.AblationSpec(
         name="regex_presidio", second_pass="presidio",
@@ -72,18 +70,12 @@ def test_skipped_when_dependency_unavailable_returns_status_row(
         language_filter="en",
         recorder=LatencyRecorder(),
     )
-    assert row.status.startswith("skipped:")
+    assert row.status == "error: RuntimeError: opf checkpoint not found"
     assert row.pr == {}
 
 
-def test_routed_opf_falls_back_when_dependency_unavailable(
-    monkeypatch, synthetic_dataset,
-):
-    monkeypatch.setattr(
-        run_detector_ablation,
-        "build_second_pass_detector",
-        lambda *a, **kw: None,
-    )
+def test_routed_opf_failed_construction_returns_error_row(monkeypatch, synthetic_dataset):
+    monkeypatch.setattr(run_detector_ablation, "build_second_pass_detector", _broken_build)
     base_config = load_config()
     spec = run_detector_ablation.AblationSpec(
         name="regex_opf_routed",
@@ -97,7 +89,8 @@ def test_routed_opf_falls_back_when_dependency_unavailable(
         language_filter="all",
         recorder=LatencyRecorder(),
     )
-    assert row.status.startswith("skipped:")
+    assert row.status.startswith("error: RuntimeError: opf checkpoint not found")
+    assert row.pr == {}
 
 
 def test_resolve_routed_opf_prefers_language_model_then_default():

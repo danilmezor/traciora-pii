@@ -112,19 +112,16 @@ def main():
         cfg = load_config(None).with_overrides(
             {"detector": {"second_pass": "presidio", "presidio": {"language": "en"}}})
         det = build_second_pass_detector(cfg)
-        if det is None:
-            print("presidio detector unavailable; skipped")
-        else:
-            try:
-                pr, _ = metrics.detection_precision_recall_with_records(
-                    dataset, second_pass_detector=det)
-                summarize("regex_presidio", pr)
-            finally:
-                close = getattr(det, "close", None)
-                if callable(close):
-                    close()
+        try:
+            pr, _ = metrics.detection_precision_recall_with_records(
+                dataset, second_pass_detector=det)
+            summarize("regex_presidio", pr)
+        finally:
+            close = getattr(det, "close", None)
+            if callable(close):
+                close()
     except Exception as exc:  # noqa: BLE001
-        print(f"presidio row skipped: {type(exc).__name__}: {exc}")
+        print(f"presidio row error: {type(exc).__name__}: {exc}")
 
     print("\n== regex_nemo (EN slice) ==")
     nemo = NemoCachedDetector(cache)

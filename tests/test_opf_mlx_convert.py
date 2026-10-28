@@ -1,5 +1,6 @@
 """An opf checkpoint converts to the mlx-embeddings privacy-filter layout."""
 import json
+import os
 
 import pytest
 
@@ -137,6 +138,50 @@ def test_convert_is_idempotent_until_source_changes(opf_checkpoint):
     assert is_current(opf_checkpoint, dst, None)
     assert not is_current(opf_checkpoint, dst, 8)
     mx.save_safetensors(str(opf_checkpoint / "model.safetensors"), _opf_weights(1))
+    assert not is_current(opf_checkpoint, dst, None)
+
+
+def test_is_current_skips_the_hash_when_size_and_mtime_match(opf_checkpoint, monkeypatch):
+    from traciora_pii import opf_mlx_convert
+
+    dst = convert_checkpoint(opf_checkpoint, converted_path(opf_checkpoint, None), bits=None)
+
+    def no_hash(src):
+        raise AssertionError("is_current hashed the source although size and mtime match")
+
+    monkeypatch.setattr(opf_mlx_convert, "_source_sha256", no_hash)
+    assert is_current(opf_checkpoint, dst, None)
+
+
+def test_is_current_hashes_once_after_a_touch_then_records_the_new_mtime(opf_checkpoint, monkeypatch):
+    from traciora_pii import opf_mlx_convert
+
+    dst = convert_checkpoint(opf_checkpoint, converted_path(opf_checkpoint, None), bits=None)
+    weights = opf_checkpoint / "model.safetensors"
+    stat = weights.stat()
+    os.utime(weights, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    real_hash, calls = opf_mlx_convert._source_sha256, []
+
+    def counted(src):
+        calls.append(src)
+        return real_hash(src)
+
+    monkeypatch.setattr(opf_mlx_convert, "_source_sha256", counted)
+    assert is_current(opf_checkpoint, dst, None)
+    assert len(calls) == 1
+    assert is_current(opf_checkpoint, dst, None)
+    assert len(calls) == 1
+
+
+def test_is_current_is_false_when_the_bytes_change(opf_checkpoint):
+    dst = convert_checkpoint(opf_checkpoint, converted_path(opf_checkpoint, None), bits=None)
+    weights = opf_checkpoint / "model.safetensors"
+    data = bytearray(weights.read_bytes())
+    data[-1] ^= 0xFF
+    stat = weights.stat()
+    weights.write_bytes(bytes(data))
+    os.utime(weights, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    assert weights.stat().st_size == stat.st_size
     assert not is_current(opf_checkpoint, dst, None)
 
 

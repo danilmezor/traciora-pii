@@ -337,7 +337,7 @@ class TestBuilderWiring:
         detector = build_second_pass_detector(cfg)
         assert isinstance(detector, PresidioPIIDetector)
 
-    def test_build_second_pass_detector_falls_back_when_extra_missing(self, monkeypatch, caplog):
+    def test_build_second_pass_detector_raises_when_extra_missing(self, monkeypatch):
         import sys
 
         # Force the import to fail.
@@ -347,11 +347,36 @@ class TestBuilderWiring:
         from traciora_pii.pii_virtualizer import build_second_pass_detector
 
         cfg = PIIConfig().with_overrides({"detector": {"second_pass": "presidio"}})
-        with caplog.at_level("WARNING"):
-            detector = build_second_pass_detector(cfg)
+        with pytest.raises(ImportError):
+            build_second_pass_detector(cfg)
 
-        assert detector is None
-        assert any("presidio" in rec.message.lower() for rec in caplog.records)
+    @pytest.mark.parametrize("mode, module, cls", [
+        ("opf", "traciora_pii.opf_pii_detector", "OPFPIIDetector"),
+        ("llm", "traciora_pii.llm_pii_detector", "LLMPIIDetector"),
+        ("presidio", "traciora_pii.presidio_pii_detector", "PresidioPIIDetector"),
+    ])
+    def test_build_second_pass_detector_raises_when_construction_fails(
+        self, monkeypatch, mode, module, cls,
+    ):
+        import importlib
+
+        from traciora_pii.config import PIIConfig
+        from traciora_pii.pii_virtualizer import build_second_pass_detector
+
+        def broken(*args, **kwargs):
+            raise RuntimeError("checkpoint missing")
+
+        monkeypatch.setattr(getattr(importlib.import_module(module), cls), "from_config", broken)
+        cfg = PIIConfig().with_overrides({"detector": {"second_pass": mode}})
+        with pytest.raises(RuntimeError, match="checkpoint missing"):
+            build_second_pass_detector(cfg)
+
+    def test_build_second_pass_detector_none_mode_returns_none(self):
+        from traciora_pii.config import PIIConfig
+        from traciora_pii.pii_virtualizer import build_second_pass_detector
+
+        cfg = PIIConfig().with_overrides({"detector": {"second_pass": "none"}})
+        assert build_second_pass_detector(cfg) is None
 
 
 # ----------------------------------------------------------------------

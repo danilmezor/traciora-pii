@@ -25,6 +25,20 @@ def test_single_window_for_short_text():
     assert window_starts(512, 512, 128) == [0]
 
 
+def test_decoder_returning_the_wrong_length_raises():
+    import torch
+
+    class ShortDecoder:
+        def decode(self, scores):
+            return [0] * (scores.shape[0] - 1)
+
+    runtime = MLXRuntime.__new__(MLXRuntime)
+    runtime.decoder = ShortDecoder()
+    runtime.token_log_probs = lambda token_ids: torch.zeros((len(token_ids), 3))
+    with pytest.raises(RuntimeError, match=r"2 labels for 3 tokens"):
+        runtime.token_labels([1, 2, 3])
+
+
 def test_empty_text_gives_no_spans():
     import tiktoken
 
