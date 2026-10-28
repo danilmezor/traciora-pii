@@ -305,7 +305,7 @@ def test_prepare_second_pass_dispatches(monkeypatch, tmp_path):
     assert calls == [("ensure", entry, str(tmp_path)), ("validate", tmp_path / "ru", entry)]
 
     unknown = config.with_overrides({"detector": {"encoder": {"default_model": "xx"}}})
-    with pytest.raises(KeyError, match="'xx' is not registered.*Available: ru\."):
+    with pytest.raises(KeyError, match=r"'xx' is not registered.*Available: ru\."):
         runtime.prepare_second_pass(unknown)
 
 
