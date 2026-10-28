@@ -105,17 +105,10 @@ class PIIVirtualizer:
                 )
                 result = result[:finding.start] + ref_token + result[finding.end:]
 
-        # Second pass — OPF detector on the regex-tokenized text.
-        # Fail-safe: any error falls back to the regex-only output.
+        # Second pass on the regex-tokenized text. A failure propagates: a
+        # turn the configured detector did not cover is never returned.
         if self._second_pass is not None:
-            try:
-                result = self._apply_second_pass(session_scope_key, result)
-            except Exception as exc:  # noqa: BLE001 — second-pass fail-safe; regex output is the fallback
-                logger.warning(
-                    "PIIVirtualizer second-pass failed; falling back to regex-only output. "
-                    "error_type=%s",
-                    type(exc).__name__,
-                )
+            result = self._apply_second_pass(session_scope_key, result)
         return result
 
     def _apply_second_pass(self, session_scope_key: str, text: str) -> str:

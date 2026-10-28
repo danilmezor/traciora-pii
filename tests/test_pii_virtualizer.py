@@ -217,3 +217,18 @@ class TestVaultTransaction:
         with pytest.raises(RuntimeError, match="vault write failed"):
             virtualizer.anonymize_text(scope, text)
         assert vault.resolve_all_tokens(scope) == {}
+
+
+def test_anonymize_text_propagates_second_pass_failure(vault, scope):
+    from traciora_pii.opf_pii_detector import OPFInferenceError
+
+    class _FailingSecondPass:
+        def detect(self, text):
+            raise OPFInferenceError("boom")
+
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=_FailingSecondPass())
+    text = "Ivan Petrov, call +79128565950"
+    returned = []
+    with pytest.raises(OPFInferenceError, match="boom"):
+        returned.append(virtualizer.anonymize_text(scope, text))
+    assert returned == []

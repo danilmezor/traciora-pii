@@ -122,7 +122,9 @@ model/configuration change requires a process restart. A configured second pass
 either runs or refuses; there is no regex-only fallback. Once opened, the detector
 runs one self-check sentence in the selected language. If the checkpoint cannot
 be opened, or the self-check finds no name, `get_shared_second_pass` raises
-`SecondPassUnavailable`; if inference fails, it raises the inference error. It
+`SecondPassUnavailable`; if inference fails, it raises the inference error, and
+`anonymize_text` propagates it without returning text, so a failed second pass
+fails the call. It
 raises again on every call until restart, without retrying the load. Session owners close
 their own vaults; only process shutdown closes the shared detector.
 
