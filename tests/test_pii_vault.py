@@ -124,3 +124,49 @@ class TestCleanup:
         vault.open_session(session_key)
         count = vault.cleanup_expired(ttl_hours=24)
         assert count == 0
+
+
+class _CommitCounter:
+    """Stands in for the sqlite3 connection and counts commits."""
+
+    def __init__(self, conn):
+        self._conn = conn
+        self.commits = 0
+
+    def commit(self):
+        self.commits += 1
+        self._conn.commit()
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
+class TestBatch:
+    def test_batch_commits_once(self, vault, session_key):
+        vault.open_session(session_key)
+        counter = _CommitCounter(vault._conn)
+        vault._conn = counter
+        with vault.batch():
+            for i in range(20):
+                vault.get_or_create_token(session_key, "[EMAIL]", f"user{i}@example.com")
+        assert counter.commits == 1
+
+    def test_batch_rolls_back_on_error(self, vault, session_key):
+        vault.open_session(session_key)
+        refs = []
+        with pytest.raises(RuntimeError, match="mid-batch"):
+            with vault.batch():
+                refs.append(vault.get_or_create_token(session_key, "[EMAIL]", "a@example.com"))
+                refs.append(vault.get_or_create_token(session_key, "[EMAIL]", "b@example.com"))
+                raise RuntimeError("mid-batch")
+        assert len(refs) == 2
+        assert all(vault.resolve_token(session_key, ref) is None for ref in refs)
+        assert vault.resolve_all_tokens(session_key) == {}
+
+    def test_outside_batch_each_token_commits(self, vault, session_key):
+        vault.open_session(session_key)
+        counter = _CommitCounter(vault._conn)
+        vault._conn = counter
+        vault.get_or_create_token(session_key, "[EMAIL]", "a@example.com")
+        vault.get_or_create_token(session_key, "[EMAIL]", "b@example.com")
+        assert counter.commits == 2

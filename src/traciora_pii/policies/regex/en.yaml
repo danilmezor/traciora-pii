@@ -67,7 +67,13 @@ patterns:
   # — unconditional —
   - name: date
     placeholder: '[DATE]'
-    pattern: '\b(?:\d{1,2}[./-]\d{1,2}[./-]\d{2,4}|\d{4}[./-]\d{1,2}[./-]\d{1,2})\b'
+    # Dates of birth only. The year must fall in 1900-2015: customers younger
+    # than ten do not appear in these conversations, and every later date is
+    # an order, appointment or invoice date, not personal data. Revisit the
+    # upper bound yearly. A two-digit year (08/25/80) always reads as a year
+    # inside the window, so it is kept. The lookarounds reject a date-shaped
+    # run inside a longer dotted or dashed number (5.2.0.1234, ORD-2026-0815).
+    pattern: '(?<![\w./-])(?:\d{1,2}[./-]\d{1,2}[./-](?:19\d{2}|200\d|201[0-5]|\d{2})|(?:19\d{2}|200\d|201[0-5])[./-]\d{1,2}[./-]\d{1,2})(?![\w]|[./-]\d)'
 
   - name: email
     placeholder: '[EMAIL]'
@@ -109,7 +115,10 @@ patterns:
     placeholder: '[PHONE]'
     # (?<!\d) / (?!\d) prevent matching inside a longer digit run; \b alone
     # let the 10-digit body match substrings of e.g. 12-digit INNs.
-    pattern: '(?<!\d)(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?!\d)'
+    # A phone needs phone structure: a +1 prefix, an area code in
+    # parentheses, or a separator after the area code. A bare run of ten
+    # digits is an INN, a tracking number or the tail of an id, not a phone.
+    pattern: '(?<!\d)(?:\+1[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|(?:1[\s.-]?)?(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]?\d{4})(?!\d)'
 
   - name: iban
     placeholder: '[IBAN]'

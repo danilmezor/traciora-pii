@@ -91,17 +91,19 @@ class PIIVirtualizer:
         findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
         merged = _merge_findings(findings) if findings else []
 
-        # Build result from right to left to preserve offsets
+        # Build result from right to left to preserve offsets. One vault
+        # transaction for the whole loop: one commit, nothing left on failure.
         result = text
-        for finding in reversed(merged):
-            raw = text[finding.start:finding.end]
-            ref_token = self._vault.get_or_create_token(
-                session_scope_key,
-                finding.placeholder,
-                raw,
-                source="anonymize",
-            )
-            result = result[:finding.start] + ref_token + result[finding.end:]
+        with self._vault.batch():
+            for finding in reversed(merged):
+                raw = text[finding.start:finding.end]
+                ref_token = self._vault.get_or_create_token(
+                    session_scope_key,
+                    finding.placeholder,
+                    raw,
+                    source="anonymize",
+                )
+                result = result[:finding.start] + ref_token + result[finding.end:]
 
         # Second pass — OPF detector on the regex-tokenized text.
         # Fail-safe: any error falls back to the regex-only output.
@@ -141,27 +143,30 @@ class PIIVirtualizer:
              if not category_is_excluded(f.placeholder, self._excluded_categories)),
             key=lambda f: (f.start, f.end),
         )
+        # Inference above runs outside the vault lock; the token writes share
+        # one transaction of their own.
         result = text
-        for finding in reversed(ordered):
-            raw = result[finding.start:finding.end]
-            if not raw:
-                continue
-            if _overlaps_ref(finding.start, finding.end):
-                logger.debug(
-                    "PIIVirtualizer dropping OPF span that overlaps existing ref token: "
-                    "placeholder=%s span=%r",
+        with self._vault.batch():
+            for finding in reversed(ordered):
+                raw = result[finding.start:finding.end]
+                if not raw:
+                    continue
+                if _overlaps_ref(finding.start, finding.end):
+                    logger.debug(
+                        "PIIVirtualizer dropping OPF span that overlaps existing ref token: "
+                        "placeholder=%s span=%r",
+                        finding.placeholder,
+                        raw[:60],
+                    )
+                    continue
+                ref_token = self._vault.get_or_create_token(
+                    session_scope_key,
                     finding.placeholder,
-                    raw[:60],
+                    raw,
+                    source="anonymize-opf",
+                    normalization_key=finding.lemma,
                 )
-                continue
-            ref_token = self._vault.get_or_create_token(
-                session_scope_key,
-                finding.placeholder,
-                raw,
-                source="anonymize-opf",
-                normalization_key=finding.lemma,
-            )
-            result = result[:finding.start] + ref_token + result[finding.end:]
+                result = result[:finding.start] + ref_token + result[finding.end:]
         return result
 
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:

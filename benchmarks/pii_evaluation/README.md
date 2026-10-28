@@ -44,8 +44,8 @@ measure_vault_ref_stability.py    vault ref-token cross-turn stability probe
 diagnose_cross_turn_failures.py   companion diagnostic for cross-turn lemma failures
                                   (maintainer-only)
 tests/                            pytest regression suite (parity, metrics, leakage, ablation)
-results/                          tracked output (JSON + markdown tables)
-                                  — overwritten by claim runners; the
+results/                          gitignored output (JSON + markdown tables)
+                                  — overwritten by every run; the
                                     frozen reference snapshots live under
                                     claims/N/expected/.
 ```
@@ -160,6 +160,24 @@ Configurations:
 5. `regex_presidio` — regex + Microsoft Presidio (third-party baseline).
 
 Configurations whose dependencies are missing are reported with `status="skipped: <reason>"` rather than dropped silently. Output lands in `results/detector_ablation_<slug>.{md,json}`.
+
+### Anchor, 2026-10-27, M1 Pro CPU, commit 9b48661
+
+`dataset_v1.jsonl`, 309 queries, 312 gold spans; OPF on `device: cpu` with the local
+`fine_tuning/runs/{ru,en,de}-v2/checkpoint` fine-tunes for the routed row and
+`openai/privacy-filter` for the base row. `results/` is gitignored, so this table is
+the only kept copy; a run overwrites `results/detector_ablation_<slug>.*`.
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_only` | 272 | 0 | 40 | 1.000 | 0.872 | 0.857 | 0.802 | 0.000 |
+| `regex_opf_base` | 300 | 13 | 12 | 0.958 | 0.962 | 0.872 | 0.831 | 2.773 |
+| `regex_opf_routed` | 311 | 11 | 1 | 0.966 | 0.997 | 0.784 | 0.817 | 1.373 |
+
+Regex-only misses are by design (30 names, 3 addresses) plus 6 German Steuer-IDs and one
+Russian passport without a keyword. Routed false positives: 2 each of `[DE_STEUER_ID]`,
+`[PERSONAL_ID]`, `[PERSON_NAME]`, `[SECRET]`, one each of `[RU_BANK_ACCOUNT]`, `[RU_OGRN]`,
+`[STREET_ADDRESS]`.
 
 ## Security stress — archetype 3 (tool-exception leakage)
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from traciora_pii.pii import detect_pii
+from traciora_pii.pii import detect_pii, redact_pii_text
 from traciora_pii.policies.loader import compile_regex_policy, load_regex_policy
 
 
@@ -233,3 +233,119 @@ def test_plate_regex_keyword_anchored_no_false_positive(multi_detectors):
         detectors=multi_detectors,
     )
     assert "[LICENSE_PLATE]" not in [f.placeholder for f in findings]
+
+
+# ----------------------------------------------------------------------
+# DATE — dates of birth only: a 1900–2015 year on word boundaries
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("policy", ["en", "de", "ru"])
+@pytest.mark.parametrize("value", ["1985-03-12", "12.03.1985", "03/06/1951", "08/25/80", "08.01.54"])
+def test_date_of_birth_is_masked(policy, value):
+    text = f"Born {value}, please verify."
+    findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))
+    dates = [text[f.start:f.end] for f in findings if f.placeholder == "[DATE]"]
+    assert dates == [value]
+
+
+@pytest.mark.parametrize("policy", ["en", "de", "ru"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Move the appointment to 2026-08-20 14:00.",
+        "Build 5.2.0.1234 was deployed.",
+        "Version 2.0.1234 is live.",
+        "Order ORD-2026-0815 shipped.",
+        "Invoice dated 31.12.2024 is attached.",
+        "Ticket 1.2.1985.4 is open.",
+    ],
+)
+def test_non_birth_dates_are_not_masked(policy, text):
+    findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))
+    assert [text[f.start:f.end] for f in findings if f.placeholder == "[DATE]"] == []
+
+
+# ----------------------------------------------------------------------
+# PHONE needs phone structure; SNILS in the `ddd-ddd-ddd dd` layout is SNILS
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("policy", ["en", "de", "ru"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Tracking number 7701234567 was shipped.",
+        "Trace ID a1b2c3d4-e5f6-7890-abcd-ef1234567890 appeared twice.",
+        "Verify the identifier 057-909-793 19 today.",
+        "Verify the identifier 12 345 678 901 today.",
+        "Verify the identifier 52 462 017 834 today.",
+        "Check the national identifier 879-062-149 47.",
+    ],
+)
+def test_numbers_without_phone_structure_are_not_phones(policy, text):
+    findings = detect_pii(text, detectors=compile_regex_policy(load_regex_policy(policy)))
+    assert [text[f.start:f.end] for f in findings if f.placeholder == "[PHONE]"] == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "+7 495 014-22-33",
+        "8 (495) 014 22 33",
+        "89275694674",
+        "+49 30 1234567",
+        "030 1234567",
+        "0049-152-6665722",
+        "+1 (415) 555-0199",
+        "1 (650) 402-1566",
+        "720.504.2598",
+        "(407) 312-6575",
+    ],
+)
+def test_structured_phones_are_masked(multi_detectors, value):
+    text = f"Call {value}, thanks."
+    _redacted, merged = redact_pii_text(text, detectors=multi_detectors)
+    assert [(text[f.start:f.end], f.placeholder) for f in merged] == [(value, "[PHONE]")]
+
+
+@pytest.mark.parametrize("value", ["057-909-793 19", "090-035-050 16", "879-062-149 47"])
+def test_checksum_valid_snils_is_snils_without_keyword(multi_detectors, value):
+    text = f"Verify the identifier {value} today."
+    _redacted, merged = redact_pii_text(text, detectors=multi_detectors)
+    assert [(text[f.start:f.end], f.placeholder) for f in merged] == [(value, "[RU_SNILS]")]
+
+
+def test_checksum_invalid_snils_without_keyword_is_not_snils(multi_detectors):
+    text = "Verify the identifier 057-909-793 18 today."
+    findings = detect_pii(text, detectors=multi_detectors)
+    assert [f.placeholder for f in findings] == []
+
+
+# ----------------------------------------------------------------------
+# Zero-width characters do not split identifiers; offsets stay in the original
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, placeholder",
+    [
+        ("+7 495 0​14 2233", "[PHONE]"),
+        ("8 (812) 4‌44 77‍88", "[PHONE]"),
+        ("ivan.pe﻿trov@example.com", "[EMAIL]"),
+    ],
+)
+def test_zero_width_characters_do_not_split_identifiers(multi_detectors, value, placeholder):
+    text = f"Reach me at ​{value}​ today."
+    _redacted, merged = redact_pii_text(text, detectors=multi_detectors)
+    assert [(text[f.start:f.end], f.placeholder) for f in merged] == [(value, placeholder)]
+
+
+def test_text_without_zero_width_characters_keeps_its_spans(multi_detectors):
+    text = "Call +7 495 014-22-33 or mail ivan@example.com."
+    findings = detect_pii(text, detectors=multi_detectors)
+    assert {(text[f.start:f.end], f.placeholder) for f in findings} == {
+        ("+7 495 014-22-33", "[PHONE]"),
+        ("ivan@example.com", "[EMAIL]"),
+    }
+    assert sorted((f.start, f.end) for f in findings if f.placeholder == "[EMAIL]") == [(30, 46)]

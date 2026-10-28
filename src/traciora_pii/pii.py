@@ -43,6 +43,10 @@ class PIIFinding:
 
 _DEFAULT_DETECTORS_CACHE: list[PIIDetector] | None = None
 
+# Zero-width characters split an identifier for the patterns
+# (`+7 495 0<U+200B>14 2233`) without changing what a reader sees.
+_ZERO_WIDTH = frozenset("\u200b\u200c\u200d\ufeff")
+
 
 def _get_default_detectors() -> list[PIIDetector]:
     """Lazy-load and cache the default regex policy's compiled detectors.
@@ -121,18 +125,28 @@ def detect_pii(
     )
 
     with time_detector("regex"):
+        # Match on a copy without zero-width characters; `kept[i]` is the
+        # original index of the copy's i-th character, so spans point into
+        # *text* and cover any zero-width characters inside the value.
+        if _ZERO_WIDTH.isdisjoint(text):
+            scan, kept = text, None
+        else:
+            kept = [i for i, ch in enumerate(text) if ch not in _ZERO_WIDTH]
+            scan = "".join(text[i] for i in kept)
         findings: list[PIIFinding] = []
         active = (list(detectors) if detectors is not None else
                   configured_detectors(config) if config is not None else _get_default_detectors())
         for detector in active:
             if category_is_excluded(detector.placeholder, excluded):
                 continue
-            for match in detector.pattern.finditer(text):
+            for match in detector.pattern.finditer(scan):
                 start, end = match.span()
-                if not _keyword_ok(text, start, end, detector):
+                if not _keyword_ok(scan, start, end, detector):
                     continue
-                if detector.validator is not None and not detector.validator(text[start:end]):
+                if detector.validator is not None and not detector.validator(scan[start:end]):
                     continue
+                if kept is not None:
+                    start, end = kept[start], kept[end - 1] + 1
                 findings.append(
                     PIIFinding(
                         detector=detector.name,
