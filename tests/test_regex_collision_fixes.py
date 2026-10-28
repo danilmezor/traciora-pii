@@ -320,3 +320,32 @@ def test_checksum_invalid_snils_without_keyword_is_not_snils(multi_detectors):
     text = "Verify the identifier 057-909-793 18 today."
     findings = detect_pii(text, detectors=multi_detectors)
     assert [f.placeholder for f in findings] == []
+
+
+# ----------------------------------------------------------------------
+# Zero-width characters do not split identifiers; offsets stay in the original
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "value, placeholder",
+    [
+        ("+7 495 0​14 2233", "[PHONE]"),
+        ("8 (812) 4‌44 77‍88", "[PHONE]"),
+        ("ivan.pe﻿trov@example.com", "[EMAIL]"),
+    ],
+)
+def test_zero_width_characters_do_not_split_identifiers(multi_detectors, value, placeholder):
+    text = f"Reach me at ​{value}​ today."
+    _redacted, merged = redact_pii_text(text, detectors=multi_detectors)
+    assert [(text[f.start:f.end], f.placeholder) for f in merged] == [(value, placeholder)]
+
+
+def test_text_without_zero_width_characters_keeps_its_spans(multi_detectors):
+    text = "Call +7 495 014-22-33 or mail ivan@example.com."
+    findings = detect_pii(text, detectors=multi_detectors)
+    assert {(text[f.start:f.end], f.placeholder) for f in findings} == {
+        ("+7 495 014-22-33", "[PHONE]"),
+        ("ivan@example.com", "[EMAIL]"),
+    }
+    assert sorted((f.start, f.end) for f in findings if f.placeholder == "[EMAIL]") == [(30, 46)]
