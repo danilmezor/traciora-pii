@@ -1,0 +1,294 @@
+# PII Virtualization Evaluation Experiment
+
+> Data policy: source tools and synthetic fixture definitions are tracked.
+> Generated datasets, imported caches, reports, result snapshots, logs,
+> training runs, and model checkpoints stay local and are ignored by Git.
+
+This folder contains the end-to-end experiments: cross-source detection, detector ablation, tool calling and security robustness. It is **not** a unit test — it makes real LLM calls and writes results tables.
+
+## What it measures
+
+| Metric | Source |
+|---|---|
+| Tool-call success rate per configuration | `metrics.tool_call_success_rate` |
+| Raw PII reaching the LLM per configuration | `metrics.model_pii_exposure_count` |
+| End-to-end latency (median, p95, mean) | `metrics.latency_stats` |
+| Per-detector latency contribution (regex / second-pass) | `metrics.latency_contribution_report` |
+| Leak-guard trigger rate (virtualization only) | `metrics.leak_guard_trigger_rate` |
+| Per-detector precision and recall | `metrics.detection_precision_recall` |
+| Per-(language × placeholder) precision and recall | `metrics.detection_precision_recall_per_language` |
+| Per-(length-bucket × language × placeholder) precision and recall | `metrics.detection_precision_recall_by_length_bucket` |
+
+Each query is run through three configurations:
+1. **baseline** — no PII protection at all (utility upper bound)
+2. **destructive** — packaged `PIIRedactor` applied to every message and tool result
+3. **virtualization** — packaged vault + tool broker + leak guard
+
+## Files
+
+```
+__init__.py                       package marker
+dataset/                          trilingual EN/DE/RU scenario-driven dataset
+                                  (YAML scenarios + frozen JSONL + renderer)
+tools.py                          real LangChain @tool functions over an in-memory CRM
+pipelines.py                      shared agent loop + the three pipeline configurations
+metrics.py                        M1–M5 computation + per-language / length-bucket breakdowns
+metrics_argfidelity.py            argument fidelity + cross-turn token stability
+run_experiment.py                 tool-calling driver (full framework eval)
+run_detector_ablation.py          consolidated detector ablation table driver
+run_imported_dataset_eval.py      cross-source detection generalization
+                                  (ai4privacy_de / nemotron_en / wolframko_ru)
+measure_vault_ref_stability.py    vault ref-token cross-turn stability probe
+                                  (forensic tool; not run by the reproduce scripts)
+diagnose_cross_turn_failures.py   companion diagnostic for cross-turn lemma failures
+tests/                            pytest regression suite (parity, metrics, leakage, ablation)
+results/                          gitignored output (JSON + markdown tables)
+                                  — overwritten by every run; keep
+                                    reference snapshots under
+                                    results/reference/<experiment>/.
+```
+
+## Running
+
+### Dataset only (no LLM, free, fast)
+
+Computes only the detection precision/recall table — useful for iterating on the dataset and the regex detectors without burning API budget.
+
+```bash
+python -m benchmarks.pii_evaluation.run_experiment --dataset-only
+```
+
+### Full experiment (real LLM)
+
+Requires both an env-var enable flag and a working LLM provider key. The standalone harness builds `langchain_openai.ChatOpenAI` directly from `PII_EVAL_API_KEY`, `PII_EVAL_BASE_URL`, and `PII_EVAL_MODEL_NAME`.
+
+```bash
+PII_EVAL_LLM_ENABLED=1 python -m benchmarks.pii_evaluation.run_experiment
+```
+
+To override the model just for this experiment without touching package defaults:
+
+```bash
+PII_EVAL_LLM_ENABLED=1 \
+PII_EVAL_MODEL_NAME=deepseek-chat \
+PII_EVAL_API_KEY=sk-... \
+PII_EVAL_BASE_URL=https://api.deepseek.com/v1 \
+python -m benchmarks.pii_evaluation.run_experiment
+```
+
+Cost estimate: 300 queries × 3 configurations × ~2 LLM calls per query ≈ 1,800 calls per model. On `deepseek-chat` this is a few dollars per full run.
+
+## Output
+
+After a full run:
+
+- `results/results.json` — complete per-query transcripts and the metric breakdowns
+- `results/results.md` — two markdown tables (end-to-end metrics + per-detector P/R)
+
+The script also prints a one-line summary to stdout for at-a-glance verification.
+
+## Sanity bounds for the numbers
+
+If the experiment produces numbers outside these bounds, **investigate before publishing**:
+
+- baseline tool-call success: should be at or near 100% (the LLM has nothing in its way)
+- destructive tool-call success: should be substantially below 100% — the tool receives placeholder strings on every PII-dependent query and returns "not found"
+- virtualization tool-call success: should be at or near 100% — any failure is a finding worth understanding
+- raw PII reaching the model under virtualization: must be **0** — anything else is a wiring bug
+- leak-guard trigger rate under virtualization: probably non-zero on the multi-turn bucket; this is the most interesting empirical result
+
+## Reproducibility
+
+Temperature is fixed at 0.0. The experiment is otherwise free of randomness. Two runs against the same model should produce identical transcripts; if they do not, the provider is not honoring `temperature=0` and that fact should be reported with the results.
+
+## Detector ablation via `run_experiment.py`
+
+Second-pass detector selection lives on the main driver (`--second-pass {none,opf,llm,presidio}`) plus the orthogonal `--opf-model` flag for OPF model registry selection. Detection P/R is reported per language (en / de / ru).
+
+```bash
+# Regex-only baseline
+python -m benchmarks.pii_evaluation.run_experiment --dataset-only --second-pass none
+
+# OPF, default registered model
+python -m benchmarks.pii_evaluation.run_experiment --dataset-only --second-pass opf
+
+# LLM second-pass via OpenRouter (default) — model is required at runtime
+python -m benchmarks.pii_evaluation.run_experiment \
+    --dataset-only --second-pass llm \
+    --detector-llm-model 'nvidia/nemotron-nano-9b-v2:free'
+
+# LLM second-pass via a local OpenAI-compatible endpoint (LM Studio / Ollama / vLLM)
+python -m benchmarks.pii_evaluation.run_experiment \
+    --dataset-only --second-pass llm \
+    --detector-llm-model 'nvidia/nemotron-nano-9b-v2' \
+    --detector-llm-base-url 'http://localhost:1234/v1'
+
+# Presidio (third-party detector baseline). Requires the optional extra
+# and the matching spaCy model:
+#   pip install -e '.[presidio]'
+#   python -m spacy download en_core_web_sm  # or de_core_news_sm / ru_core_news_sm
+PII_PRESIDIO_LANGUAGE=en \
+python -m benchmarks.pii_evaluation.run_experiment --dataset-only --second-pass presidio
+```
+
+## Consolidated detector ablation
+
+`run_detector_ablation.py` runs all five detector configurations against the same dataset slice and emits one comparison table:
+
+```bash
+# Full lineup (skips regex_llm if --detector-llm-model is not supplied)
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation
+
+# All five configs including the LLM second-pass
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
+    --detector-llm-model 'nvidia/nemotron-nano-9b-v2:free'
+
+# Slice + opt-in subset
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
+    --language en --bucket single_turn \
+    --only regex_only,regex_opf_base,regex_presidio
+```
+
+Configurations:
+
+1. `regex_only` — first-pass regex detectors only.
+2. `regex_opf_base` — regex + base OPF token classifier.
+3. `regex_opf_routed` — regex + per-language fine-tuned OPF; languages without a registered fine-tune fall back to the registry default. Matches the runtime routing.
+4. `regex_llm` — regex + OpenAI-compatible LLM via OpenRouter (or any local endpoint). Requires `--detector-llm-model`; otherwise the row is reported with `status="skipped: …"`.
+5. `regex_presidio` — regex + Microsoft Presidio (third-party baseline).
+6. `regex_encoder_routed` — regex + per-language encoder from `detector.encoder.models` (ru ruBERT, en/de Horizon), routed like `regex_opf_routed`.
+
+Configurations whose dependencies are missing are reported with `status="skipped: <reason>"` rather than dropped silently. Output lands in `results/detector_ablation_<slug>.{md,json}`.
+
+### Reference numbers, OPF (M1 Pro CPU)
+
+`dataset_v1.jsonl`, 309 queries, 312 gold spans; OPF on `device: cpu` with the local
+`fine_tuning/runs/{ru,en,de}-v2/checkpoint` fine-tunes for the routed row and
+`openai/privacy-filter` for the base row. `results/` is gitignored, so this table is
+the only kept copy; a run overwrites `results/detector_ablation_<slug>.*`.
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_only` | 272 | 0 | 40 | 1.000 | 0.872 | 0.857 | 0.802 | 0.000 |
+| `regex_opf_base` | 300 | 13 | 12 | 0.958 | 0.962 | 0.872 | 0.831 | 2.773 |
+| `regex_opf_routed` | 311 | 11 | 1 | 0.966 | 0.997 | 0.784 | 0.817 | 1.373 |
+
+Regex-only misses are by design (30 names, 3 addresses) plus 6 German Steuer-IDs and one
+Russian passport without a keyword. Routed false positives: 2 each of `[DE_STEUER_ID]`,
+`[PERSONAL_ID]`, `[PERSON_NAME]`, `[SECRET]`, one each of `[RU_BANK_ACCOUNT]`, `[RU_OGRN]`,
+`[STREET_ADDRESS]`.
+
+The routed row on `device: mlx` (same Mac; load average between 7 and 80, so s/query is
+indicative). The same three local fine-tunes, converted by `prepare_second_pass`, run in 512-token windows with
+128 tokens of overlap:
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_opf_routed`, mlx bf16 | 311 | 11 | 1 | 0.966 | 0.997 | 0.784 | 0.817 | 0.097 |
+| `regex_opf_routed`, mlx 8-bit | 311 | 10 | 1 | 0.969 | 0.997 | 0.785 | 0.817 | 0.088 |
+
+bf16 has the CPU row's counts and the same false positives by placeholder. 8-bit differs
+on one query: `scn-sec-710-ru` ("Найди клиента по референс-токену
+phone_ref:ph_deadbeef00.") loses its `[PERSON_NAME]` false positive.
+
+`anonymize_text` end to end on the four Russian profile workloads (regex, vault, MLX
+second pass with the ru fine-tune, lemma), median of 3 after one warm-up, one process per
+row, load average 8-10:
+
+| workload | chars | mlx bf16 (ms) | mlx 8-bit (ms) |
+|---|---:|---:|---:|
+| small | 126 | 15.2 | 21.8 |
+| medium | 1,629 | 62.2 | 78.9 |
+| document | 39,466 | 1,265 | 1,381 |
+| db_result | 66,974 | 3,847 | 4,053 |
+| MLX active after load / peak | | 2.61 / 3.33 GiB | 1.39 / 2.11 GiB |
+| phys_footprint peak | | 4.34 GB | 3.64 GB |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 12.5 s | 10.3 s |
+
+### Reference numbers, encoder (M1 Pro CPU)
+
+`detector.second_pass: encoder` on `device: cpu` (torch 2.15.0), threshold 0.5: ruBERT
+(`redmadrobot-rnd/rubert-base-pii-ner`) for ru, Horizon (`Horizon-Labs/pii-redactor-small`)
+for en and de, from the pinned cache under `~/.cache/traciora_pii/models/encoder/`. Same
+309 queries and 312 gold spans as above; load average 8.3-9.2, so s/query is indicative.
+
+```bash
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_detector_ablation \
+    --only regex_only,regex_encoder_routed
+```
+
+| Configuration | TP | FP | FN | micro P | micro R | macro P | macro R | s/query |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| `regex_only` | 272 | 0 | 40 | 1.000 | 0.872 | 0.857 | 0.802 | 0.000 |
+| `regex_encoder_routed` | 304 | 4 | 8 | 0.987 | 0.974 | 0.959 | 0.943 | 0.095 |
+
+The 8 misses are the regex layer's 6 `[DE_STEUER_ID]` (one in a ru query, `scn-sec-742-ru`)
+and 1 `[PERSONAL_ID]` (`scn-st-042-ru`, a СНИЛС), plus the name `König Maria`
+(`scn-mt-105-de`). The 4 false positives are all `[STREET_ADDRESS]`: room numbers in
+`scn-neg-603-de` (`Raum 4321`), `scn-neg-609-de` (`Raum 412`) and `scn-neg-609-ru`
+(`кабинете 412`), and `scn-mt-205-de`, where Horizon returns `Reeperbahn 84` and a separate
+`1` from `Etage 1`.
+
+hivetrace `pii-bench` (ru, `domain` + `entity` splits, 1,810 rows: 228 names, 176 addresses),
+overlap matching with projection-symmetric scoring:
+
+```bash
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
+    --dataset hivetrace_ru --target-rows 1810 --raw-limit 1810 --detector regex_encoder
+```
+
+| Detector | names TP/FP/FN | names P | names R | addresses TP/FP/FN | addresses P | addresses R |
+|---|---|---:|---:|---|---:|---:|
+| `regex_only` | 0/0/228 | 0.000 | 0.000 | 0/0/176 | 0.000 | 0.000 |
+| `regex_encoder` | 227/7/1 | 0.970 [0.946, 0.991] | 0.996 [0.984, 1.000] | 168/12/8 | 0.933 [0.894, 0.968] | 0.955 [0.923, 0.982] |
+
+The wrapper joins an address fragment across `на` into one span, so it overlaps the gold
+address in `domain-dialog_081` (`квартире 34 на ул. Садовая 18`), `domain-dialog_090`
+(`4 на Новослободской 21`) and `domain-st_096` (`офис на Тверской 15`) as one TP.
+
+`anonymize_text` end to end on the four Russian profile workloads (`traciora_config("ru")`,
+regex, vault, encoder second pass, lemma), median of 3 after one warm-up, one process per
+row. CPU on the M1 Pro (torch 2.15.0) at load average 7.3-8.3; CUDA on an RTX 5060 Ti
+(Linux, torch 2.11.0+cu128, fp16) at load average 0.7-1.5:
+
+| workload | chars | cpu (ms) | cuda (ms) |
+|---|---:|---:|---:|
+| small | 126 | 53.1 | 14.1 |
+| medium | 1,629 | 101 | 14.8 |
+| document | 39,466 | 1,960 | 83.8 |
+| db_result | 66,974 | 8,142 | 351 |
+| phys_footprint peak (`proc_pid_rusage`) | | 486 MB | |
+| CUDA peak allocated | | | 449 MB |
+| process start to ready (incl. `prepare_second_pass` and self-check) | | 3.6-4.3 s (7.5 s cold) | 2.4 s (5.2 s cold) |
+
+These are end-to-end times with regex, vault and lemma included. On an unloaded machine the
+CPU path measured 43 / 90 / 1,645 / 6,453 ms and 446 MB.
+
+Known limitation: room numbers come back as addresses from both models (`Raum 412`,
+`Raum 4321`, `кабинете 412`), 3 of the 4 false positives on the 309 set. No rule removes them.
+
+## Security stress — archetype 3 (tool-exception leakage)
+
+The `tool_exception_leakage` workflow drives a tool that raises with the raw card number embedded in its `ValueError`. The agent loop in `pipelines.py` catches the exception and stringifies it verbatim into the next ToolMessage — that's the leak surface this archetype tests. Pass conditions are inverted from the other archetypes:
+
+- **baseline / destructive**: `exposure > 0` is the *expected* leak. Zero would mean the harness silently scrubbed an exception body, which would be a wiring regression.
+- **virtualization**: `exposure == 0`. The leak guard inspects ToolMessage content and triggers re-anonymization before the message reaches the model.
+
+## Imported-dataset detection eval
+
+Runs the full regex+OPF detector against an external HF dataset and scores per-placeholder P/R/F1.
+
+```bash
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
+    --dataset wolframko_ru --target-rows 200 --raw-limit 600
+
+PYTHONPATH=src python -m benchmarks.pii_evaluation.run_imported_dataset_eval \
+    --dataset nemotron_en --target-rows 200 --raw-limit 800
+```
+
+## Vault ref-token stability
+
+```bash
+python -m benchmarks.pii_evaluation.measure_vault_ref_stability                    # default OPF model
+python -m benchmarks.pii_evaluation.measure_vault_ref_stability --opf-model en     # registry override
+```

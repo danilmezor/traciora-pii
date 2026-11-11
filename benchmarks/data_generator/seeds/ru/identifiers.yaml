@@ -1,0 +1,180 @@
+# Russian-specific identifier configuration. These are the *data tables*
+# the algorithms read; the algorithms themselves (INN/SNILS/OGRN/VIN
+# checksums, BIK 04-prefix rule, plate format) live in `faker_providers.py`
+# because they are math, not data.
+
+# Cyrillic letters allowed on Russian civilian licence plates. The plate
+# format is `<L1><DDD><L2><L3><RR[R]>[RUS]` where L1, L2, L3 are drawn
+# from this set.
+plate_letters: "АВЕКМНОРСТУХ"
+
+# Region codes printed at the right of the plate. We use only realistic
+# active regional codes — drivers register a plate in one place; the
+# generator picks one of these per call.
+plate_regions:
+  - 16    # Татарстан
+  - 18    # Удмуртия
+  - 23    # Краснодарский край
+  - 24    # Красноярский край
+  - 25    # Приморский край
+  - 36    # Воронежская область
+  - 50    # Московская область
+  - 52    # Нижегородская область
+  - 54    # Новосибирская область
+  - 55    # Омская область
+  - 59    # Пермский край
+  - 61    # Ростовская область
+  - 62    # Рязанская область
+  - 63    # Самарская область
+  - 64    # Саратовская область
+  - 66    # Свердловская область
+  - 70    # Томская область
+  - 71    # Тульская область
+  - 72    # Тюменская область
+  - 74    # Челябинская область
+  - 76    # Ярославская область
+  - 77    # Москва (основной)
+  - 78    # Санкт-Петербург (основной)
+  - 90    # Московская область (доп.)
+  - 93    # Краснодарский край (доп.)
+  - 96    # Свердловская область (доп.)
+  - 97    # Москва (доп.)
+  - 98    # Санкт-Петербург (доп.)
+  - 99    # Москва (доп.)
+  - 102   # Башкортостан (доп.)
+  - 116   # Татарстан (доп.)
+  - 123   # Краснодарский край (доп.)
+  - 124   # Красноярский край (доп.)
+  - 150   # Московская область (доп.)
+  - 152   # Нижегородская область (доп.)
+  - 159   # Пермский край (доп.)
+  - 161   # Ростовская область
+  - 163   # Самарская область (доп.)
+  - 174   # Челябинская область (доп.)
+  - 177   # Москва (доп.)
+  - 178   # Санкт-Петербург (доп.)
+  - 190   # Московская область (доп.)
+  - 196   # Свердловская область (доп.)
+  - 197   # Москва (доп.)
+  - 199   # Москва (доп.)
+  - 250   # Московская область (доп.)
+  - 550   # Московская область (доп.)
+  - 716   # Татарстан (доп.)
+  - 750   # Московская область (доп.)
+  - 763   # Самарская область (доп.)
+  - 777   # Москва (доп.)
+  - 797   # Москва (доп.)
+  - 799   # Москва (доп.)
+
+# Probability the plate carries the trailing "RUS" tag. Most do; some lookups
+# strip it (e.g. ANPR systems sometimes omit), so we keep some without.
+plate_rus_suffix_probability: 0.65
+
+# OSAGO insurance series. Cyrillic three-letter prefixes per РСА Resolution
+# No. 277. The generator picks one + a 10-digit number.
+osago_series:
+  - ХХХ
+  - МММ
+  - ККК
+  - РРР
+  - ТТТ
+  - ААА
+
+# Russian mobile phone operator prefixes. The generator picks one of these
+# as the second triple (after +7 / 8) of a mobile number. Numbers are
+# always synthetic — we don't validate against a live carrier database.
+mobile_prefixes:
+  - 900
+  - 901
+  - 902
+  - 903
+  - 904
+  - 905
+  - 906
+  - 908
+  - 909
+  - 910
+  - 911
+  - 912
+  - 913
+  - 914
+  - 915
+  - 916
+  - 917
+  - 918
+  - 919
+  - 920
+  - 921
+  - 922
+  - 923
+  - 924
+  - 925
+  - 926
+  - 927
+  - 928
+  - 929
+  - 930
+  - 931
+  - 932
+  - 933
+  - 934
+  - 935
+  - 936
+  - 937
+  - 938
+  - 939
+  - 950
+  - 951
+  - 952
+  - 958
+  - 960
+  - 961
+  - 962
+  - 963
+  - 964
+  - 965
+  - 966
+  - 967
+  - 968
+  - 969
+  - 970
+  - 971
+  - 977
+  - 978
+  - 979
+  - 980
+  - 981
+  - 982
+  - 983
+  - 984
+  - 985
+  - 986
+  - 987
+  - 988
+  - 989
+  - 990
+  - 991
+  - 992
+  - 993
+  - 994
+  - 995
+  - 996
+  - 997
+  - 998
+  - 999
+
+# RU phone format strings. {op} = mobile prefix, {a},{b},{c} = three digit
+# blocks of the line number.
+phone_formats:
+  - "+7 {op} {a}-{b}-{c}"
+  - "+7 ({op}) {a}-{b}-{c}"
+  - "8 ({op}) {a} {b} {c}"
+  - "+7{op}{a}{b}{c}"
+  - "8 {op} {a} {b} {c}"
+  - "8{op}{a}{b}{c}"
+  - "+7-{op}-{a}-{b}-{c}"
+  - "+7 ({op}) {a} {b}-{c}"
+  - "8-{op}-{a}-{b}-{c}"
+  - "+7 {op}-{a}-{b}-{c}"
+  - "+7 ({op}) {a}{b}{c}"
+  - "+7 {op} {a} {b}-{c}"
