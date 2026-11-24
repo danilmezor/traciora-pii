@@ -22,7 +22,11 @@ streamed answer ──► StreamingRefRehydrator ──► user sees real values
    values such as names and street addresses. See [Detectors](detectors.md).
 2. **Tokenize.** `PIIVirtualizer.anonymize_text` replaces each finding with a
    reference token. The second pass runs on the already-tokenized text, so it
-   never sees a value the regex pass caught.
+   never sees a value the regex pass caught. Before either pass, every value
+   the session's vault already holds is replaced by its token wherever it
+   appears, so a value a detector misses in one text (a plate written without
+   the word "plate", a name the second pass catches only once) still reaches
+   the model as its token.
 3. **Vault.** `PIIVaultStore` keeps each original value, encrypted with Fernet,
    in SQLite under the session it belongs to.
 4. **Restore tool arguments.** A tool wrapped with `make_pii_brokered_tool`
@@ -49,6 +53,12 @@ Every call takes a `session_scope_key`, usually one per conversation.
 - Russian names are keyed by their dictionary form, so inflected forms of one
   name share a token. The first surface form seen is what rehydration returns.
 - The same value gets a different token in a different session.
+- A value the session already holds is found without a detector when it is
+  written with the same characters, in any case for values with a digit or an
+  `@` and in the stored case for names, with any whitespace, dashes or
+  parentheses between them. It is not replaced inside a longer word or
+  number. Values shorter than four characters, or than six digits for a bare
+  number, are left to the detectors.
 - `vault.close_session(key)` stops resolution. Rows stay for audit but no
   longer resolve.
 - `vault.cleanup_expired(ttl_hours=24)` expires sessions idle longer than the TTL.

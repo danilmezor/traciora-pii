@@ -52,7 +52,8 @@ detector:
 Exclusions apply to the regex pass, every second-pass backend, destructive
 masking and the leak guard's detection policy. Excluded findings are dropped
 before replacement and never stored in the vault. Tokens already in the vault
-still resolve. Input Unicode normalization still runs.
+still resolve, but a value of an excluded category that is already in the
+vault is left as text. Input Unicode normalization still runs.
 
 An exclusion does not shield its whole span: a phone number or email inside a
 URL is still masked when `url` is excluded. An excluded value stays in the text

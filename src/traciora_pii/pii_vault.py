@@ -11,10 +11,13 @@ import re
 import secrets
 import sqlite3
 import threading
+from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -79,9 +82,40 @@ def _make_preview(raw_value: str, pii_type: str) -> str:
     return v[:3] + "***" + v[-2:]
 
 
+# Characters that do not change a value's identity: two values that differ
+# only by these (and by case) share one token. The known-value pass in the
+# virtualizer builds its matchers from the same class.
+NORMALIZE_SEPARATORS = r"[\s\-\(\)]"
+_SEPARATORS_RE = re.compile(NORMALIZE_SEPARATORS + "+")
+
+
 def _normalize_value(raw_value: str) -> str:
     """Normalize a PII value for deterministic hashing (strip whitespace, dashes, parens)."""
-    return re.sub(r"[\s\-\(\)]+", "", raw_value.strip()).lower()
+    return _SEPARATORS_RE.sub("", raw_value.strip()).lower()
+
+
+class KnownValue(NamedTuple):
+    """One value a session has tokenized: its token, placeholder and raw value."""
+
+    ref_token: str
+    pii_type: str
+    raw_value: str
+
+
+@dataclass(frozen=True, eq=False, slots=True, weakref_slot=True)
+class KnownValues:
+    """A session's tokenized values, oldest first.
+
+    The vault returns the same object until the session gains a token, so a
+    caller can key derived data (such as a compiled matcher) on the object
+    weakly: it is dropped with the vault's cache entry.
+    """
+
+    version: tuple[int, int]
+    values: tuple[KnownValue, ...]
+
+
+_NO_KNOWN_VALUES = KnownValues((0, 0), ())
 
 
 class PIIVaultStore:
@@ -94,6 +128,9 @@ class PIIVaultStore:
         # methods; other threads wait until the batch commits or rolls back.
         self._lock = threading.RLock()
         self._batch_depth = 0
+        # Decrypted values per active session, so the known-value pass does not
+        # decrypt the whole session on every call. Least recently used first.
+        self._known: OrderedDict[str, KnownValues] = OrderedDict()
 
         if isinstance(encryption_key, str):
             encryption_key = encryption_key.encode() if encryption_key else Fernet.generate_key()
@@ -121,6 +158,9 @@ class PIIVaultStore:
                 self._batch_depth -= 1
                 if self._batch_depth == 0:
                     self._conn.rollback()
+                    # A rolled-back row may have been cached, and its rowid
+                    # can be reused by the next insert.
+                    self._known.clear()
                 raise
             self._batch_depth -= 1
             self._commit()
@@ -172,6 +212,7 @@ class PIIVaultStore:
                 (_now_iso(), session_scope_key),
             )
             self._commit()
+            self._known.pop(session_scope_key, None)
             logger.debug("PII vault session closed: scope=%s", session_scope_key)
 
     def touch_session(self, session_scope_key: str) -> None:
@@ -326,6 +367,64 @@ class PIIVaultStore:
                 logger.warning("PII vault decryption failed for ref=%s", ref_token)
         return result
 
+    # Sessions whose decrypted values stay in memory at once.
+    _KNOWN_CACHE_SESSIONS = 256
+
+    def known_values(self, session_scope_key: str) -> KnownValues:
+        """Return every value an active session has tokenized, oldest first.
+
+        The decrypted values are cached per session. Each call costs one
+        indexed query on the session's rows; only rows added since the last
+        call are decrypted. A closed or expired session has no known values.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT sc.status, COUNT(tm.ref_token), COALESCE(MAX(tm.rowid), 0) "
+                "FROM session_context sc "
+                "LEFT JOIN token_map tm ON tm.session_scope_key = sc.session_scope_key "
+                "WHERE sc.session_scope_key = ?",
+                (session_scope_key,),
+            ).fetchone()
+            status, count, max_rowid = row if row is not None else (None, 0, 0)
+            if status != "active" or not count:
+                self._known.pop(session_scope_key, None)
+                return _NO_KNOWN_VALUES
+            version = (count, max_rowid)
+            cached = self._known.get(session_scope_key)
+            if cached is not None and cached.version == version:
+                self._known.move_to_end(session_scope_key)
+                return cached
+
+            # Rows are only ever added, so new rows sit above the cached max
+            # rowid. Anything else (a rollback, an outside delete) reloads.
+            query = (
+                "SELECT ref_token, pii_type, value_ciphertext FROM token_map "
+                "WHERE session_scope_key = ? AND rowid > ? ORDER BY rowid"
+            )
+            values: list[KnownValue] = []
+            rows = None
+            if cached is not None and cached.version[1] < max_rowid:
+                rows = self._conn.execute(query, (session_scope_key, cached.version[1])).fetchall()
+                if cached.version[0] + len(rows) == count:
+                    values = list(cached.values)
+                else:
+                    rows = None
+            if rows is None:
+                rows = self._conn.execute(query, (session_scope_key, 0)).fetchall()
+            for ref_token, pii_type, ciphertext in rows:
+                try:
+                    raw = self._fernet.decrypt(ciphertext).decode("utf-8")
+                except InvalidToken:
+                    logger.warning("PII vault decryption failed for ref=%s", ref_token)
+                    continue
+                values.append(KnownValue(ref_token, pii_type, raw))
+            known = KnownValues(version, tuple(values))
+            self._known[session_scope_key] = known
+            self._known.move_to_end(session_scope_key)
+            while len(self._known) > self._KNOWN_CACHE_SESSIONS:
+                self._known.popitem(last=False)
+            return known
+
     # ------------------------------------------------------------------
     # Maintenance
     # ------------------------------------------------------------------
@@ -341,6 +440,8 @@ class PIIVaultStore:
             )
             count = cursor.rowcount
             self._commit()
+            if count:
+                self._known.clear()
         if count:
             logger.info("PII vault expired %d sessions (ttl=%dh)", count, ttl_hours)
         return count
@@ -358,6 +459,7 @@ class PIIVaultStore:
     def close(self) -> None:
         """Close the underlying database connection."""
         with self._lock:
+            self._known.clear()
             try:
                 self._conn.close()
             except sqlite3.Error as exc:
