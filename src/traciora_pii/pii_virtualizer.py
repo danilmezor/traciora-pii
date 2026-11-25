@@ -3,15 +3,26 @@ and rehydrate them back to real values.
 """
 from __future__ import annotations
 
+import bisect
 import logging
 import re
 import unicodedata
+import weakref
 from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
 from .pii import PIIFinding, detect_pii
-from .pii_vault import PARTIAL_REF_TOKEN_PATTERN, REF_TOKEN_PATTERN, PIIVaultStore
+from .pii_vault import (
+    _SEPARATORS_RE,
+    NORMALIZE_SEPARATORS,
+    PARTIAL_REF_TOKEN_PATTERN,
+    REF_TOKEN_PATTERN,
+    KnownValue,
+    KnownValues,
+    PIIVaultStore,
+    _normalize_value,
+)
 
 if TYPE_CHECKING:
     from .config import PIIConfig
@@ -46,7 +57,11 @@ class PIIVirtualizer:
     """Anonymize PII in text/structured data with vault-backed ref tokens,
     and rehydrate refs back to raw values.
 
-    The first pass is always the regex layer (``detect_pii``). An optional
+    Before any detector runs, every value the session already tokenized is
+    replaced by its token wherever it appears in the text, so a value never
+    goes back to the model because a detector missed it this time.
+
+    The first detector pass is always the regex layer (``detect_pii``). An optional
     second pass runs a bidirectional token classifier (a fine-tuned OPF
     model) over the regex-tokenized output to catch names, addresses, and
     other entities regex structurally can't handle. The fine-tune training
@@ -72,22 +87,46 @@ class PIIVirtualizer:
         )
         self._vault = vault
         self._second_pass = second_pass_detector
+        # Matcher per cached vault entry: it lives exactly as long as the
+        # vault keeps that session's decrypted values, and a session that
+        # gains a token gets a new entry and so a new matcher.
+        self._known_matchers: weakref.WeakKeyDictionary[KnownValues, _KnownValueMatcher | None] = (
+            weakref.WeakKeyDictionary()
+        )
 
     # ------------------------------------------------------------------
     # Anonymize (raw PII → ref tokens)
     # ------------------------------------------------------------------
 
+    def _replace_known_values(self, session_scope_key: str, text: str) -> str:
+        known = self._vault.known_values(session_scope_key)
+        if not known.values:
+            return text
+        try:
+            matcher = self._known_matchers[known]
+        except KeyError:
+            matcher = _KnownValueMatcher.build(known.values, self._excluded_categories)
+            self._known_matchers[known] = matcher
+        return matcher.replace(text) if matcher is not None else text
+
     def anonymize_text(self, session_scope_key: str, text: str) -> str:
         """Replace raw PII spans in *text* with deterministic ref tokens.
 
-        Two passes compose: regex first, then optional OPF second-pass
-        over the regex-tokenized output. Both passes write through the
-        same vault, so downstream rehydration is identical.
+        Three passes compose. Every value the session's vault already holds
+        is replaced by its token wherever it appears; then the regex layer;
+        then the optional second pass over the tokenized output. The
+        detector passes write through the same vault, so downstream
+        rehydration is identical.
         """
         if not text:
             return text
 
         text = _normalize_input(text)
+        # Values this session already holds become their tokens first, so a
+        # value the detectors would miss in this text (a plate without its
+        # keyword, a name the model does not catch twice) never goes back
+        # out as text.
+        text = self._replace_known_values(session_scope_key, text)
         findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
         merged = _merge_findings(findings) if findings else []
 
@@ -300,6 +339,136 @@ def _merge_findings(findings):
         else:
             merged.append(f)
     return merged
+
+
+# Known-value pass. A value matches where its significant characters (the
+# value without the separators the vault's normaliser drops) appear in order,
+# with any run of those separators between them: the same rule that gives two
+# spellings one token. Matching is case-insensitive for values with a digit or
+# an "@" (phones, emails, plates, IDs), where case means nothing, and exact for
+# letter-only values (names), where "Mark" and "mark" differ.
+_KNOWN_SEPARATOR = NORMALIZE_SEPARATORS + "*"
+# A value glued to a word character by one of these is part of a longer token
+# ("anna.lee@…", "+1-555-…", "12.03.2026", "Anna-Maria"), not the value.
+_KNOWN_JOINER = r"[.\-+@/]"
+_KNOWN_LEFT = rf"(?<!\w)(?<!\w{_KNOWN_JOINER})"
+_KNOWN_RIGHT = rf"(?!\w)(?!{_KNOWN_JOINER}\w)"
+# Shorter values are too likely to be a different thing that looks the same:
+# a count, a year, an amount, a common word.
+_KNOWN_MIN_CHARS = 4
+_KNOWN_MIN_DIGITS = 6
+
+try:  # Python 3.11+: the compiler behind re.compile, without its cache.
+    from re._compiler import compile as _compile_uncached
+except ImportError:  # pragma: no cover
+    _compile_uncached = re.compile
+
+
+def _significant(value: str) -> str:
+    return _SEPARATORS_RE.sub("", value.strip())
+
+
+def _long_enough(significant: str) -> bool:
+    if significant.lstrip("+").isdigit():
+        return len(significant.lstrip("+")) >= _KNOWN_MIN_DIGITS
+    return len(significant) >= _KNOWN_MIN_CHARS
+
+
+def _trie_pattern(values: Iterable[str]) -> str:
+    """A regex matching any of *values*, separators allowed between characters.
+
+    Built as a trie so a position fails after one character test instead of
+    one per value; a value that continues into a longer one is tried longest
+    first and falls back to the shorter one.
+    """
+    root: dict = {}
+    for value in values:
+        node = root
+        for char in value:
+            node = node.setdefault(char, {})
+        node[""] = {}
+
+    def emit(node: dict) -> str:
+        branches = []
+        for char in sorted(k for k in node if k):
+            child = node[char]
+            branch = re.escape(char)
+            # A run of single-child nodes is one flat sequence, so nesting
+            # grows only where values diverge.
+            while len(child) == 1 and "" not in child:
+                (char,) = child
+                branch += _KNOWN_SEPARATOR + re.escape(char)
+                child = child[char]
+            if len(child) > ("" in child):
+                rest = f"{_KNOWN_SEPARATOR}(?:{emit(child)})"
+                branch += f"(?:{rest})?" if "" in child else rest
+            branches.append(branch)
+        return "|".join(branches)
+
+    return emit(root)
+
+
+class _KnownValueMatcher:
+    """One compiled pattern over a session's known values."""
+
+    def __init__(self, pattern: re.Pattern, folded: dict[str, str], exact: dict[str, str]):
+        self._pattern = pattern
+        self._folded = folded  # vault-normalized value -> token
+        self._exact = exact    # significant characters -> token
+
+    @classmethod
+    def build(cls, values: Iterable[KnownValue], excluded_categories) -> _KnownValueMatcher | None:
+        from ._masking_policy import category_is_excluded
+
+        folded: dict[str, str] = {}
+        exact: dict[str, str] = {}
+        # Oldest first: when two tokens share a value, the first one wins.
+        for value in values:
+            if category_is_excluded(value.pii_type, excluded_categories):
+                continue
+            raw = _normalize_input(value.raw_value)
+            significant = _significant(raw)
+            if not _long_enough(significant):
+                continue
+            if "@" in significant or any(c.isdigit() for c in significant):
+                folded.setdefault(_normalize_value(raw), value.ref_token)
+            else:
+                exact.setdefault(significant, value.ref_token)
+        if not folded and not exact:
+            return None
+        union = "|".join(
+            ([f"(?i:{_trie_pattern(folded)})"] if folded else [])
+            + ([_trie_pattern(exact)] if exact else [])
+        )
+        # Compiled outside re's module cache: that cache is process-wide, would
+        # keep up to 512 of these large patterns, and with them the session's
+        # raw values after the session is closed.
+        pattern = _compile_uncached(f"{_KNOWN_LEFT}(?:{union}){_KNOWN_RIGHT}", 0)
+        return cls(pattern, folded, exact)
+
+    def replace(self, text: str) -> str:
+        token_spans = [m.span() for m in REF_TOKEN_PATTERN.finditer(text)]
+        token_starts = [start for start, _ in token_spans]
+        parts: list[str] = []
+        pos = 0
+        for match in self._pattern.finditer(text):
+            start, end = match.span()
+            i = bisect.bisect_right(token_starts, start) - 1
+            if (i >= 0 and start < token_spans[i][1]) or (
+                i + 1 < len(token_spans) and token_spans[i + 1][0] < end
+            ):
+                continue  # never inside an existing token
+            span = match.group()
+            token = self._folded.get(_normalize_value(span)) or self._exact.get(_significant(span))
+            if token is None:
+                continue
+            parts.append(text[pos:start])
+            parts.append(token)
+            pos = end
+        if not parts:
+            return text
+        parts.append(text[pos:])
+        return "".join(parts)
 
 
 class StreamingRefRehydrator:

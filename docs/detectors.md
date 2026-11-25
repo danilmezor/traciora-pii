@@ -2,7 +2,9 @@
 
 Detection runs in two passes. The regex pass always runs. One optional second
 pass, set by `detector.second_pass`, then runs over the regex-tokenized text,
-so it never sees a value the regex pass already replaced.
+so it never sees a value the regex pass already replaced. Before both, values
+the session's vault already holds are replaced by their tokens, so a value
+either pass found once stays a token in every later text of the session.
 
 ## Regex pass
 
