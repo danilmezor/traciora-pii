@@ -274,3 +274,16 @@ def test_bare_id_must_belong_to_one_token_in_the_active_session(vault, virtualiz
     vault.get_or_create_token("another", "[PERSON_NAME]", "Sam")
     vault.close_session("another")
     assert virtualizer.rehydrate_text("another", bare) == bare
+
+
+def test_phone_prediction_inside_a_task_uuid_preserves_the_id(vault, scope):
+    from types import SimpleNamespace
+    identifier = "cafeaabb-cafe-4abc-8349-6571045f3075"
+
+    class Detector:
+        def detect(self, text):
+            start = text.index("8349-6571045")
+            return [SimpleNamespace(start=start, end=start + 12, placeholder="[PHONE]", lemma=None)]
+
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=Detector())
+    assert virtualizer.anonymize_structured(scope, {"task": identifier}) == {"task": identifier}

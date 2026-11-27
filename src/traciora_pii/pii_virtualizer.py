@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import PIIFinding, detect_pii
+from .pii import _UUID, PIIFinding, detect_pii
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -173,8 +173,11 @@ class PIIVirtualizer:
         # overlap would corrupt the vault — skip defensively.
         ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
 
-        def _overlaps_ref(s: int, e: int) -> bool:
-            return any(s < re and rs < e for rs, re in ref_spans)
+        phone_protected = ref_spans + [m.span() for m in _UUID.finditer(text)]
+
+        def protected(finding) -> bool:
+            spans = phone_protected if finding.placeholder == "[PHONE]" else ref_spans
+            return any(finding.start < end and start < finding.end for start, end in spans)
 
         # Sort ascending then walk right-to-left for offset stability.
         from ._masking_policy import category_is_excluded
@@ -191,13 +194,7 @@ class PIIVirtualizer:
                 raw = result[finding.start:finding.end]
                 if not raw:
                     continue
-                if _overlaps_ref(finding.start, finding.end):
-                    logger.debug(
-                        "PIIVirtualizer dropping OPF span that overlaps existing ref token: "
-                        "placeholder=%s span=%r",
-                        finding.placeholder,
-                        raw[:60],
-                    )
+                if protected(finding):
                     continue
                 ref_token = self._vault.get_or_create_token(
                     session_scope_key,
