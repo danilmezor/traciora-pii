@@ -11,6 +11,7 @@ import re
 import secrets
 import sqlite3
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -137,11 +138,27 @@ class PIIVaultStore:
             encryption_key = encryption_key.encode() if encryption_key else Fernet.generate_key()
         self._fernet = Fernet(encryption_key)
 
-        self._conn = sqlite3.connect(str(self._db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA foreign_keys=ON")
-        self._conn.executescript(_SCHEMA_SQL)
-        self._conn.commit()
+        # SQLite can reject competing WAL switches immediately even with a
+        # busy handler. Apply one deadline to the whole idempotent bootstrap.
+        conn = sqlite3.connect(str(self._db_path), timeout=0, check_same_thread=False)
+        try:
+            deadline = time.monotonic() + 5
+            while True:
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA foreign_keys=ON")
+                    conn.executescript(_SCHEMA_SQL)
+                    break
+                except sqlite3.OperationalError as exc:
+                    code = exc.sqlite_errorcode & 0xff  # extended codes share their primary byte
+                    if code not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED) or time.monotonic() >= deadline:
+                        raise
+                    time.sleep(0.01)
+            conn.execute("PRAGMA busy_timeout=5000")  # restore sqlite3.connect's default for normal use
+        except BaseException:
+            conn.close()
+            raise
+        self._conn = conn
 
     @contextmanager
     def batch(self) -> Iterator[None]:
