@@ -166,3 +166,24 @@ def test_flush_drains_remaining_buffer(virtualizer, scope):
     final = out_a + out_b + out_flush
     assert "+79128565950" in final
     assert "phone_ref:" not in final
+
+
+def test_only_standalone_session_ids_rehydrate_at_every_split(vault, virtualizer, scope):
+    ref = vault.get_or_create_token(scope, "[PERSON_NAME]", "Alex")
+    bare = ref.split(":")[1]
+    text = (f"Use {bare}, {ref} and ({bare}). Keep xx_{bare}, {bare}f, "
+            f"x_ref:{bare} and pe_bad0bad0. Final {bare}")
+    expected = (f"Use Alex, Alex and (Alex). Keep xx_{bare}, {bare}f, "
+                f"x_ref:{bare} and pe_bad0bad0. Final Alex")
+    assert virtualizer.rehydrate_text(scope, text) == expected
+    for split in range(len(text) + 1):
+        stream = StreamingRefRehydrator(virtualizer, scope)
+        assert stream.feed(text[:split]) + stream.feed(text[split:]) + stream.flush() == expected
+    assert _drain(StreamingRefRehydrator(virtualizer, scope), text, chunk_size=1) == expected
+
+
+def test_bare_id_waits_for_boundary(vault, virtualizer, scope):
+    bare = vault.get_or_create_token(scope, "[STREET_ADDRESS]", "East Road").split(":")[1]
+    stream = StreamingRefRehydrator(virtualizer, scope)
+    assert stream.feed(bare) == ""
+    assert stream.feed("!") == "East Road!"

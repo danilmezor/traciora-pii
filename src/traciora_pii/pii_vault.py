@@ -39,6 +39,7 @@ from .policies.loader import (
 
 _DEFAULT_REGEX_POLICY = load_multi_regex_policy(["en", "de", "ru"])
 _PLACEHOLDER_TO_PREFIX: dict[str, str] = build_placeholder_to_prefix(_DEFAULT_REGEX_POLICY)
+BARE_ID_PATTERN = re.compile(r"[a-z]{2}_[a-f0-9]{8}")
 REF_TOKEN_PATTERN = build_ref_token_pattern(_DEFAULT_REGEX_POLICY)
 PARTIAL_REF_TOKEN_PATTERN = build_partial_ref_token_pattern(_DEFAULT_REGEX_POLICY)
 
@@ -317,15 +318,20 @@ class PIIVaultStore:
 
     def resolve_token(self, session_scope_key: str, ref_token: str) -> str | None:
         """Resolve a ref token to its raw value. Returns None if not found or session inactive."""
+        # Different categories can share a short prefix (person_name and
+        # personal_id both use pe). Only a unique active-session match resolves.
+        bare = BARE_ID_PATTERN.fullmatch(ref_token)
+        comparison = "GLOB ?" if bare else "= ?"
+        lookup = "*_ref:" + ref_token if bare else ref_token
         with self._lock:
-            row = self._conn.execute(
+            rows = self._conn.execute(
                 "SELECT tm.value_ciphertext FROM token_map tm "
                 "JOIN session_context sc ON tm.session_scope_key = sc.session_scope_key "
-                "WHERE tm.session_scope_key = ? AND tm.ref_token = ? AND sc.status = 'active'",
-                (session_scope_key, ref_token),
-            ).fetchone()
-
-            if row is None:
+                f"WHERE tm.session_scope_key = ? AND tm.ref_token {comparison} "
+                "AND sc.status = 'active' LIMIT 2",
+                (session_scope_key, lookup),
+            ).fetchall()
+            if len(rows) != 1:
                 return None
 
             self._conn.execute(
@@ -334,7 +340,7 @@ class PIIVaultStore:
                 (_now_iso(), session_scope_key),
             )
             self._commit()
-            ciphertext = row[0]
+            ciphertext = rows[0][0]
 
         try:
             return self._fernet.decrypt(ciphertext).decode("utf-8")

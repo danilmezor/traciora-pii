@@ -259,3 +259,18 @@ def test_build_second_pass_detector_invalid_mode_lists_all_modes():
     config = PIIConfig().with_overrides({"detector": {"second_pass": "bogus"}})
     with pytest.raises(ValueError, match="none, opf, encoder, llm, presidio"):
         build_second_pass_detector(config)
+
+
+def test_bare_id_must_belong_to_one_token_in_the_active_session(vault, virtualizer, scope, monkeypatch):
+    monkeypatch.setattr(vault, "_generate_short_id", lambda prefix: "pe_41854987")
+    name = vault.get_or_create_token(scope, "[PERSON_NAME]", "Alex")
+    bare = name.split(":")[1]
+    vault.open_session("another")
+    assert virtualizer.rehydrate_text("another", bare) == bare
+    assert virtualizer.rehydrate_structured(scope, {"brief": [bare]}) == {"brief": ["Alex"]}
+    identifier = vault.get_or_create_token(scope, "[PERSONAL_ID]", "010203004")
+    assert name != identifier
+    assert virtualizer.rehydrate_text(scope, f"{name} {bare} {identifier}") == f"Alex {bare} 010203004"
+    vault.get_or_create_token("another", "[PERSON_NAME]", "Sam")
+    vault.close_session("another")
+    assert virtualizer.rehydrate_text("another", bare) == bare
