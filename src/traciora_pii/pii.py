@@ -41,9 +41,9 @@ class PIIFinding:
     placeholder: str
 
 
-# Internal IDs may contain entire local phone numbers between two hyphens.
+# The fixed groups identify the UUID even when a neighboring phone starts or ends in a hex digit.
 _UUID = re.compile(
-    r"(?<![0-9a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![0-9a-f])",
+    r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}",
     re.IGNORECASE | re.ASCII,
 )
 

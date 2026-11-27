@@ -287,3 +287,38 @@ def test_phone_prediction_inside_a_task_uuid_preserves_the_id(vault, scope):
 
     virtualizer = PIIVirtualizer(vault, second_pass_detector=Detector())
     assert virtualizer.anonymize_structured(scope, {"task": identifier}) == {"task": identifier}
+
+
+@pytest.mark.parametrize("phone", ["030 55501234", "+7 495 555-01-23", "+1 (202) 555-0123"])
+@pytest.mark.parametrize("where", ["before", "after", "between"])
+def test_phone_next_to_uuid_round_trips(vault, scope, phone, where):
+    from traciora_pii.config import PIIConfig
+
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    other = "20000000-abcd-4def-bccd-000000000001"
+    before, after = {"before": ("", identifier), "after": (identifier, ""), "between": (identifier, other)}[where]
+    source = before + phone + after
+    config = PIIConfig().with_overrides({"detector": {"regex_policies": ["de", "ru", "en"]}})
+    pii = PIIVirtualizer(vault, config=config)
+    masked = pii.anonymize_text(scope, source)
+    assert REF_TOKEN_PATTERN.sub("[PHONE]", masked) == before + "[PHONE]" + after
+    assert pii.rehydrate_text(scope, masked) == source
+
+
+@pytest.mark.parametrize(("before", "after"), [
+    ("", "2025550123"), ("0305550123", ""), ("0305550123", "2025550123"),
+])
+def test_a_phone_prediction_masks_only_the_parts_outside_the_uuid(vault, scope, before, after):
+    from traciora_pii._detector_common import LLMFinding
+
+    identifier = "cafeaabb-cafe-4abc-bcde-abcdefabcdef"
+    source = before + identifier + after
+
+    class Detector:
+        def detect(self, text):
+            return [LLMFinding("opf", 0, len(text), "[PHONE]", text)]
+
+    pii = PIIVirtualizer(vault, second_pass_detector=Detector())
+    masked = pii.anonymize_text(scope, source)
+    assert REF_TOKEN_PATTERN.sub("[PHONE]", masked) == ("[PHONE]" if before else "") + identifier + ("[PHONE]" if after else "")
+    assert pii.rehydrate_text(scope, masked) == source
