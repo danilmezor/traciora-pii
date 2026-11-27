@@ -41,6 +41,12 @@ class PIIFinding:
     placeholder: str
 
 
+# Internal IDs may contain entire local phone numbers between two hyphens.
+_UUID = re.compile(
+    r"(?<![0-9a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![0-9a-f])",
+    re.IGNORECASE | re.ASCII,
+)
+
 _DEFAULT_DETECTORS_CACHE: list[PIIDetector] | None = None
 
 # Zero-width characters split an identifier for the patterns
@@ -133,13 +139,19 @@ def detect_pii(
         else:
             kept = [i for i, ch in enumerate(text) if ch not in _ZERO_WIDTH]
             scan = "".join(text[i] for i in kept)
+        # A phone matcher can consume the end of an ID and the start of a
+        # real neighboring phone in one match. Mask first to preserve both
+        # the neighboring match and its offsets. Other detectors still see
+        # the original text (e.g. an email with a UUID in its local part).
+        phone_scan = _UUID.sub("x" * 36, scan) if "-" in scan else scan
         findings: list[PIIFinding] = []
         active = (list(detectors) if detectors is not None else
                   configured_detectors(config) if config is not None else _get_default_detectors())
         for detector in active:
             if category_is_excluded(detector.placeholder, excluded):
                 continue
-            for match in detector.pattern.finditer(scan):
+            source = phone_scan if detector.placeholder == "[PHONE]" else scan
+            for match in detector.pattern.finditer(source):
                 start, end = match.span()
                 if not _keyword_ok(scan, start, end, detector):
                     continue

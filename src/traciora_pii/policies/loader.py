@@ -225,7 +225,8 @@ def build_partial_ref_token_pattern(policy: RegexPolicy) -> re.Pattern:
         reverse=True,
     )
     prefix_alt = "|".join(re.escape(p) for p in proper_prefixes) or "(?!)"
-    return re.compile(rf"(?:(?:{cat_alt}){suffix}|{prefix_alt})$")
+    partial_bare = r"(?<!\w)(?<!_ref:)[a-z](?:[a-z](?:_[a-f0-9]{0,8})?)?"
+    return re.compile(rf"(?:(?:{cat_alt}){suffix}|{partial_bare}|{prefix_alt})\Z")
 
 
 def cross_validate(opf: OPFPolicy, regex: RegexPolicy) -> None:

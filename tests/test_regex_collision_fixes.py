@@ -344,3 +344,20 @@ def test_text_without_zero_width_characters_keeps_its_spans(multi_detectors):
         ("ivan@example.com", "[EMAIL]"),
     }
     assert sorted((f.start, f.end) for f in findings if f.placeholder == "[EMAIL]") == [(30, 46)]
+
+
+@pytest.mark.parametrize("identifier", [
+    "cafeaabb-cafe-4abc-b055-545ecf8f33dd",
+    "cafeaabb-cafe-4abc-8349-6571045f3075",
+    "f001cafe-0555-4555-8999-000000000000",
+])
+def test_canonical_uuid_and_neighboring_phone_have_distinct_spans(identifier):
+    from traciora_pii.policies.loader import compile_multi_regex_policy
+    detectors = compile_multi_regex_policy(("en", "de", "ru"))
+    phone = "+1 (415) 555-2671"
+    text = f"{phone}; {identifier.upper()} {phone}"
+    redacted, findings = redact_pii_text(text, detectors=detectors)
+    assert redacted == f"[PHONE]; {identifier.upper()} [PHONE]"
+    assert all(text[f.start:f.end] == phone for f in findings)
+    email = identifier + "@example.org"
+    assert redact_pii_text(email, detectors=detectors)[0] == "[EMAIL]"

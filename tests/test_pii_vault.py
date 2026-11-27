@@ -170,3 +170,68 @@ class TestBatch:
         vault.get_or_create_token(session_key, "[EMAIL]", "a@example.com")
         vault.get_or_create_token(session_key, "[EMAIL]", "b@example.com")
         assert counter.commits == 2
+
+
+def _open_shared_vault(path, key, barrier, index):
+    barrier.wait(timeout=20)
+    vault = PIIVaultStore(path, key)
+    try:
+        scope = f"worker-{index}"
+        vault.open_session(scope)
+        vault.get_or_create_token(scope, "[EMAIL]", f"{scope}@example.org")
+    finally:
+        vault.close()
+
+
+def test_concurrent_processes_can_open_and_write_a_new_vault(tmp_path):
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    path, key = tmp_path / "fresh.db", Fernet.generate_key()
+    barrier = ctx.Barrier(6)
+    children = [ctx.Process(target=_open_shared_vault, args=(path, key, barrier, i)) for i in range(6)]
+    for child in children:
+        child.start()
+    try:
+        for child in children:
+            child.join(25)
+            assert child.exitcode == 0
+    finally:
+        for child in children:
+            if child.is_alive():
+                child.terminate()
+            child.join()
+            child.close()
+    vault = PIIVaultStore(path, key)
+    try:
+        for index in range(6):
+            scope = f"worker-{index}"
+            assert list(vault.resolve_all_tokens(scope).values()) == [f"{scope}@example.org"]
+    finally:
+        vault.close()
+
+
+def test_a_read_lock_during_first_wal_switch_is_retried(tmp_path, monkeypatch):
+    import sqlite3
+    from traciora_pii import pii_vault
+
+    path = tmp_path / "vault.db"
+    reader = sqlite3.connect(path)
+    reader.execute("BEGIN")
+    reader.execute("SELECT * FROM sqlite_schema").fetchall()
+    waits = []
+
+    def release_reader(delay):
+        waits.append(delay)
+        reader.rollback()
+
+    monkeypatch.setattr(pii_vault.time, "sleep", release_reader)
+    try:
+        vault = PIIVaultStore(path, Fernet.generate_key())
+        vault.close()
+        assert waits
+    finally:
+        reader.close()
+    from contextlib import closing
+    with closing(sqlite3.connect(path)) as reopened:
+        assert reopened.execute("PRAGMA journal_mode").fetchone() == ("wal",)

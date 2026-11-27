@@ -12,9 +12,10 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import PIIFinding, detect_pii
+from .pii import _UUID, PIIFinding, detect_pii
 from .pii_vault import (
     _SEPARATORS_RE,
+    BARE_ID_PATTERN,
     NORMALIZE_SEPARATORS,
     PARTIAL_REF_TOKEN_PATTERN,
     REF_TOKEN_PATTERN,
@@ -34,6 +35,13 @@ logger = logging.getLogger(__name__)
 # PII across digit boundaries (e.g. `+49 30 1<U+200B>23 4567`) so the regex
 # layer fails to match. Stripped before any other processing.
 _ZERO_WIDTH_RE = re.compile("[\u200b‌‍⁠﻿]")
+
+
+# The model sometimes copies just the ID. The full-token grammar remains
+# authoritative for outbound masking. Only restoration accepts shorthand.
+_RESTORABLE = re.compile(
+    rf"{REF_TOKEN_PATTERN.pattern}|(?<!\w)(?<!_ref:){BARE_ID_PATTERN.pattern}(?!\w)"
+)
 
 
 def _normalize_input(text: str) -> str:
@@ -165,8 +173,11 @@ class PIIVirtualizer:
         # overlap would corrupt the vault — skip defensively.
         ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
 
-        def _overlaps_ref(s: int, e: int) -> bool:
-            return any(s < re and rs < e for rs, re in ref_spans)
+        phone_protected = ref_spans + [m.span() for m in _UUID.finditer(text)]
+
+        def protected(finding) -> bool:
+            spans = phone_protected if finding.placeholder == "[PHONE]" else ref_spans
+            return any(finding.start < end and start < finding.end for start, end in spans)
 
         # Sort ascending then walk right-to-left for offset stability.
         from ._masking_policy import category_is_excluded
@@ -183,13 +194,7 @@ class PIIVirtualizer:
                 raw = result[finding.start:finding.end]
                 if not raw:
                     continue
-                if _overlaps_ref(finding.start, finding.end):
-                    logger.debug(
-                        "PIIVirtualizer dropping OPF span that overlaps existing ref token: "
-                        "placeholder=%s span=%r",
-                        finding.placeholder,
-                        raw[:60],
-                    )
+                if protected(finding):
                     continue
                 ref_token = self._vault.get_or_create_token(
                     session_scope_key,
@@ -214,15 +219,23 @@ class PIIVirtualizer:
         if not text:
             return text
 
-        def _replace(match: re.Match) -> str:
-            ref = match.group(0)
-            raw = self._vault.resolve_token(session_scope_key, ref)
-            if raw is None:
-                logger.warning("PII vault: unresolved ref token %s", ref)
-                return ref  # Leave unresolved refs as-is
-            return raw
+        return self._rehydrate_range(session_scope_key, text, 0, len(text))
 
-        return REF_TOKEN_PATTERN.sub(_replace, text)
+    def _rehydrate_range(self, scope: str, text: str, start: int, end: int) -> str:
+        # A streaming slice retains context on both sides for word boundaries.
+        parts = []
+        pos = start
+        for match in _RESTORABLE.finditer(text, start):
+            if match.end() > end:
+                break
+            ref = match.group()
+            raw = self._vault.resolve_token(scope, ref)
+            if raw is None and ":" in ref:
+                logger.warning("PII vault: unresolved ref token %s", ref)
+            parts.extend((text[pos:match.start()], ref if raw is None else raw))
+            pos = match.end()
+        parts.append(text[pos:end])
+        return "".join(parts)
 
     def rehydrate_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively rehydrate ref tokens in dicts, lists, and strings."""
@@ -477,12 +490,11 @@ class StreamingRefRehydrator:
     Buffers chunks to handle ref tokens that arrive split across chunks.
     """
 
-    _MAX_BUFFER = 64  # Longer than any possible ref token
-
     def __init__(self, virtualizer: PIIVirtualizer, session_scope_key: str):
         self._virtualizer = virtualizer
         self._session_scope_key = session_scope_key
         self._buffer = ""
+        self._left = ""  # five original characters for the _ref: lookbehind
 
     # Partial ref detection: matches incomplete ref token at end of buffer.
     # Derived from the same policy that builds REF_TOKEN_PATTERN so the two
@@ -496,32 +508,20 @@ class StreamingRefRehydrator:
             return ""
         self._buffer += chunk
 
-        # Find all complete ref tokens in buffer
-        safe_end = len(self._buffer)
-        partial_match = self._PARTIAL_RE.search(self._buffer)
-        if partial_match:
-            candidate = partial_match.group(0)
-            # Only hold back if the candidate looks like it could become a ref token
-            if not REF_TOKEN_PATTERN.fullmatch(candidate):
-                safe_end = partial_match.start()
-
-        safe_text = self._buffer[:safe_end]
-        self._buffer = self._buffer[safe_end:]
-
-        # Truncate buffer if it grows too large (not a real ref token)
-        if len(self._buffer) > self._MAX_BUFFER:
-            safe_text += self._buffer
-            self._buffer = ""
-
-        if not safe_text:
-            return ""
-
-        return self._virtualizer.rehydrate_text(self._session_scope_key, safe_text)
+        text = self._left + self._buffer
+        start = len(self._left)
+        end = len(text)
+        partial = self._PARTIAL_RE.search(text, start)
+        if partial and not REF_TOKEN_PATTERN.fullmatch(partial.group()):
+            # A complete bare ID also waits for its right boundary or EOF.
+            end = partial.start()
+        self._buffer = text[end:]
+        self._left = text[max(0, end - len("_ref:")):end]
+        return self._virtualizer._rehydrate_range(self._session_scope_key, text, start, end)
 
     def flush(self) -> str:
         """Flush remaining buffer at stream end."""
-        if not self._buffer:
-            return ""
-        remaining = self._buffer
-        self._buffer = ""
-        return self._virtualizer.rehydrate_text(self._session_scope_key, remaining)
+        text = self._left + self._buffer
+        start = len(self._left)
+        self._left = self._buffer = ""
+        return self._virtualizer._rehydrate_range(self._session_scope_key, text, start, len(text))
