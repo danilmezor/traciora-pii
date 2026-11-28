@@ -116,6 +116,15 @@ class SharedSecondPass:
     def __init__(self, detector):
         self._detector = detector
         self._lock = threading.Lock()
+        self.detect_many = None
+        detect_many = getattr(detector, "detect_many", None)
+        if detect_many is not None:
+            def locked_batch(texts: list[str]) -> list[list]:
+                """Predict independent sequences locally, before ordered vault writes."""
+                with self._lock:
+                    return detect_many(texts)
+
+            self.detect_many = locked_batch
 
     def detect(self, text: str) -> list:
         with self._lock:

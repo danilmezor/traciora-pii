@@ -8,11 +8,13 @@ import logging
 import re
 import unicodedata
 import weakref
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import _UUID, _without_refs, PIIFinding, detect_pii
+from .pii import _uuid_spans, _without_refs, PIIFinding, detect_pii
+from .pii_leak_guard import extract_strings
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -37,11 +39,30 @@ logger = logging.getLogger(__name__)
 _ZERO_WIDTH_RE = re.compile("[\u200b‌‍⁠﻿]")
 
 
-# The model sometimes copies just the ID. The full-token grammar remains
-# authoritative for outbound masking. Only restoration accepts shorthand.
+# The model sometimes copies just the ID. Outbound masking treats a bare
+# match as a reference only if the current vault session holds that ID.
 _RESTORABLE = re.compile(
     rf"{REF_TOKEN_PATTERN.pattern}|(?<!\w)(?<!_ref:){BARE_ID_PATTERN.pattern}(?!\w)"
 )
+
+
+def _protected_refs(
+    text: str, read_known: Callable[[], KnownValues],
+) -> Iterator[tuple[re.Match[str], str | None]]:
+    """Find existing refs, with the full spelling of a uniquely held shorthand."""
+    shorthand: dict[str, str | None] | None = None
+    for match in _RESTORABLE.finditer(text):
+        token = match.group()
+        if ":" in token:
+            yield match, None
+            continue
+        if shorthand is None:
+            shorthand = {}
+            for value in read_known().values:
+                short = value.ref_token.split(":", 1)[1]
+                shorthand[short] = None if short in shorthand else value.ref_token
+        if token in shorthand:
+            yield match, shorthand[token]
 
 
 def _normalize_input(text: str) -> str:
@@ -85,10 +106,12 @@ class PIIVirtualizer:
         excluded_categories: Iterable[str] | None = None,
         config: PIIConfig | None = None,
         map_text: Callable[[Any, Callable[[str], str]], Any] | None = None,
+        exempt_values: Callable[[], Iterable[str]] | None = None,
     ):
         from ._masking_policy import resolve_exclusions
         self._config = config
         self._map_text = map_text
+        self._exempt_values = exempt_values
         self._excluded_categories = resolve_exclusions(
             config.detector.excluded_categories
             if config is not None and excluded_categories is None else excluded_categories
@@ -106,7 +129,7 @@ class PIIVirtualizer:
     # Anonymize (raw PII → ref tokens)
     # ------------------------------------------------------------------
 
-    def _replace_known_values(self, session_scope_key: str, text: str) -> str:
+    def _replace_known_values(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
         known = self._vault.known_values(session_scope_key)
         if not known.values:
             return text
@@ -115,7 +138,10 @@ class PIIVirtualizer:
         except KeyError:
             matcher = _KnownValueMatcher.build(known.values, self._excluded_categories)
             self._known_matchers[known] = matcher
-        return matcher.replace(text) if matcher is not None else text
+        if matcher is None:
+            return text
+        token_spans = [match.span() for match, _ in _protected_refs(text, lambda: known)]
+        return matcher.replace(text, _exempt_spans(text, exempt), token_spans)
 
     def anonymize_text(self, session_scope_key: str, text: str) -> str:
         """Replace raw PII spans in *text* with deterministic ref tokens.
@@ -126,6 +152,10 @@ class PIIVirtualizer:
         detector passes write through the same vault, so downstream
         rehydration is identical.
         """
+        return self._anonymize_text(session_scope_key, text, _exempt_pattern(self._exempt_values))
+
+    def _anonymize_text(self, session_scope_key: str, text: str, exempt: re.Pattern | None,
+                        predicted: dict[str, list] | None = None) -> str:
         if not text:
             return text
 
@@ -134,9 +164,11 @@ class PIIVirtualizer:
         # value the detectors would miss in this text (a plate without its
         # keyword, a name the model does not catch twice) never goes back
         # out as text.
-        text = self._replace_known_values(session_scope_key, text)
-        findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
-        merged = _merge_findings(findings) if findings else []
+        text = self._replace_known_values(session_scope_key, text, exempt)
+        # If clipping puts another ref beside a shorthand, its original word
+        # boundary disappears. Give it its full spelling while it still has one.
+        text = self._expand_known_shorthand(session_scope_key, text)
+        merged = self._regex_findings(session_scope_key, text, exempt)
 
         # Build result from right to left to preserve offsets. One vault
         # transaction for the whole loop: one commit, nothing left on failure.
@@ -155,13 +187,41 @@ class PIIVirtualizer:
         # Second pass on the regex-tokenized text. A failure propagates: a
         # turn the configured detector did not cover is never returned.
         if self._second_pass is not None:
-            result = self._apply_second_pass(session_scope_key, result)
+            if predicted is not None and result in predicted:
+                opf_findings = predicted[result]
+            else:
+                with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
+                    opf_findings = self._second_pass.detect(result) or []
+                if predicted is not None:
+                    predicted[result] = opf_findings
+            result = self._apply_second_pass(session_scope_key, result, exempt, opf_findings)
         return result
 
-    def _apply_second_pass(self, session_scope_key: str, text: str) -> str:
-        """Run the second-pass detector over *text* and substitute findings."""
-        with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
-            opf_findings = self._second_pass.detect(text) or []
+    def _expand_known_shorthand(self, scope: str, text: str) -> str:
+        read_known = partial(self._vault.known_values, scope)
+        for match, full in reversed(list(_protected_refs(text, read_known))):
+            if full is not None:
+                text = text[:match.start()] + full + text[match.end():]
+        return text
+
+    def _regex_findings(self, scope: str, text: str, exempt: re.Pattern | None) -> list[PIIFinding]:
+        findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
+        if not findings:
+            return []
+        read_known = partial(self._vault.known_values, scope)
+        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
+        exempt_spans = _exempt_spans(text, exempt)
+        # An email or URL can cross an existing token. Keep its maskable
+        # pieces separate so restoration reads them in order.
+        pieces = (PIIFinding(finding.detector, start, end, finding.placeholder)
+                  for finding in findings
+                  if not _inside_exemption(finding.start, finding.end, exempt_spans)
+                  for start, end in _outside_tokens(finding.start, finding.end, ref_spans))
+        return _merge_findings(sorted(pieces, key=lambda finding: (finding.start, finding.end)))
+
+    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: re.Pattern | None,
+                           opf_findings: list) -> str:
+        """Substitute second-pass findings over the exact input they describe."""
         if not opf_findings:
             return text
 
@@ -171,15 +231,19 @@ class PIIVirtualizer:
         # overlap a ref token (e.g. tagging the hex suffix of
         # ``phone_ref:ph_ad3a2c1a`` as a different class). Any such
         # overlap would corrupt the vault — skip defensively.
-        ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
+        read_known = partial(self._vault.known_values, session_scope_key)
+        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
+        exempt_spans = _exempt_spans(text, exempt)
 
-        identifiers = [m.span() for m in _UUID.finditer(_without_refs(text))]
+        identifiers = _uuid_spans(_without_refs(text))
         from ._masking_policy import category_is_excluded
         spans = []
         for finding in opf_findings:
             if category_is_excluded(finding.placeholder, self._excluded_categories):
                 continue
             if any(finding.start < end and start < finding.end for start, end in ref_spans):
+                continue
+            if _inside_exemption(finding.start, finding.end, exempt_spans):
                 continue
             start, end = finding.start, finding.end
             if finding.placeholder == "[PHONE]":
@@ -212,7 +276,31 @@ class PIIVirtualizer:
 
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively anonymize PII in dicts, lists, and strings."""
-        return self._walk(payload, lambda s: self.anonymize_text(session_scope_key, s))
+        exempt = _exempt_pattern(self._exempt_values)
+        predicted = None
+        detect_many = getattr(self._second_pass, "detect_many", None)
+        if detect_many is not None:
+            # Predict byte-identical second-pass inputs without learning new
+            # values. The ordinary in-order walk can learn a token in one leaf
+            # and change a later leaf. A changed detector input is read afresh.
+            candidates = dict.fromkeys(
+                self._expand_known_shorthand(
+                    session_scope_key, self._replace_known_values(session_scope_key, _normalize_input(text), exempt)
+                )
+                for text in extract_strings(payload) if text)
+            # The second pass only sees input the regex pass has covered.
+            # A candidate needing new vault tokens waits for the ordered walk.
+            texts = [text for text in candidates if not self._regex_findings(session_scope_key, text, exempt)]
+            if texts:
+                try:
+                    with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
+                        findings = detect_many(texts)
+                    predicted = dict(zip(texts, findings, strict=True))
+                except Exception as exc:
+                    # A speculative input can differ from what the ordered
+                    # pass will see. Retry actual inputs without logging text.
+                    logger.warning("PII detector batch failed (%s); retrying actual inputs", type(exc).__name__)
+        return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt, predicted))
 
     # ------------------------------------------------------------------
     # Rehydrate (ref tokens → raw PII)
@@ -247,7 +335,8 @@ class PIIVirtualizer:
 
     def anonymize_content(self, session_scope_key: str, content: Any) -> Any:
         mapper = self._map_text or self._walk
-        return mapper(content, lambda text: self.anonymize_text(session_scope_key, text))
+        exempt = _exempt_pattern(self._exempt_values)
+        return mapper(content, lambda text: self._anonymize_text(session_scope_key, text, exempt))
 
     def rehydrate_content(self, session_scope_key: str, content: Any) -> Any:
         mapper = self._map_text or self._walk
@@ -334,6 +423,37 @@ def build_second_pass_detector(
         f"detector.second_pass={mode!r} is not a valid mode. "
         "Expected one of: none, opf, encoder, llm, presidio.",
     )
+
+
+def _exempt_pattern(values: Callable[[], Iterable[str]] | None) -> re.Pattern | None:
+    if values is None:
+        return None
+    names = sorted(filter(None, {_normalize_input(value) for value in values()}), key=len, reverse=True)
+    if not names:
+        return None
+    union = "|".join(map(re.escape, names))
+    return _compile_uncached(rf"(?<!\w)(?=({union})(?!\w))", 0)
+
+
+def _exempt_spans(text: str, exempt: re.Pattern | None) -> list[tuple[int, int]]:
+    return [match.span(1) for match in exempt.finditer(text)] if exempt else []
+
+
+def _inside_exemption(start: int, end: int, exempt: list[tuple[int, int]]) -> bool:
+    return any(left <= start and end <= right for left, right in exempt)
+
+
+def _outside_tokens(start: int, end: int, tokens: list[tuple[int, int]]) -> Iterable[tuple[int, int]]:
+    for left, right in tokens:
+        if left >= end:
+            break
+        if right <= start:
+            continue
+        if start < left:
+            yield start, left
+        start = right
+    if start < end:
+        yield start, end
 
 
 def _merge_findings(findings):
@@ -463,8 +583,7 @@ class _KnownValueMatcher:
         pattern = _compile_uncached(f"{_KNOWN_LEFT}(?:{union}){_KNOWN_RIGHT}", 0)
         return cls(pattern, folded, exact)
 
-    def replace(self, text: str) -> str:
-        token_spans = [m.span() for m in REF_TOKEN_PATTERN.finditer(text)]
+    def replace(self, text: str, exempt: list[tuple[int, int]], token_spans: list[tuple[int, int]]) -> str:
         token_starts = [start for start, _ in token_spans]
         parts: list[str] = []
         pos = 0
@@ -475,6 +594,8 @@ class _KnownValueMatcher:
                 i + 1 < len(token_spans) and token_spans[i + 1][0] < end
             ):
                 continue  # never inside an existing token
+            if _inside_exemption(start, end, exempt):
+                continue
             span = match.group()
             token = self._folded.get(_normalize_value(span)) or self._exact.get(_significant(span))
             if token is None:

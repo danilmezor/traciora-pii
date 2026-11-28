@@ -143,12 +143,17 @@ def test_padding_does_not_change_labels(tiny_detector):
     ids = tiny_detector._tokenizer(TINY_TEXT * 35, add_special_tokens=False)["input_ids"]
     bounds = window_bounds(len(ids))
     assert len(bounds) == 2 and bounds[0][1] - bounds[0][0] > bounds[1][1] - bounds[1][0]
-    batched = tiny_detector._window_probs(ids, bounds)
+    batched = tiny_detector._window_probs(ids[start:end] for start, end in bounds)
     for (start, end), together in zip(bounds, batched):
-        (alone,) = tiny_detector._window_probs(ids, [(start, end)])
+        (alone,) = tiny_detector._window_probs([ids[start:end]])
         assert together.shape == alone.shape == (end - start, together.shape[1])
         assert together.argmax(-1).tolist() == alone.argmax(-1).tolist()
         assert (together - alone).abs().max().item() < 1e-5
+
+
+def test_batched_windows_preserve_the_single_text_findings(tiny_detector):
+    texts = [TINY_TEXT, "", TINY_TEXT * 35, TINY_TEXT[:25]]
+    assert tiny_detector.detect_many(texts) == [tiny_detector.detect(text) for text in texts]
 
 
 def test_seam_token_takes_the_later_window_once_strictly_farther_from_its_inner_edge(
@@ -157,10 +162,10 @@ def test_seam_token_takes_the_later_window_once_strictly_farther_from_its_inner_
     labels = tiny_detector._labels
     window_labels = ["CITY", "COUNTRY", "DISTRICT"]
 
-    def constant_window_probs(ids, bounds):
+    def constant_window_probs(windows):
         probs = []
-        for k, (start, end) in enumerate(bounds):
-            window = torch.zeros((end - start, len(labels)))
+        for k, ids in enumerate(windows):
+            window = torch.zeros((len(ids), len(labels)))
             window[:, labels.index(f"I-{window_labels[k]}")] = 1.0
             probs.append(window)
         return probs
@@ -178,7 +183,7 @@ def test_seam_token_takes_the_later_window_once_strictly_farther_from_its_inner_
     def chars(first, last):
         return 6 * first, 6 * last + 5
 
-    fragments = tiny_detector._fragments(text)
+    (fragments,) = tiny_detector._fragments_many([text])
     assert [(f.label, f.start, f.end) for f in fragments] == [
         ("CITY", *chars(0, 445)), ("COUNTRY", *chars(446, 827)), ("DISTRICT", *chars(828, 999))]
 

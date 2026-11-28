@@ -289,6 +289,204 @@ def test_phone_prediction_inside_a_task_uuid_preserves_the_id(vault, scope):
     assert virtualizer.anonymize_structured(scope, {"task": identifier}) == {"task": identifier}
 
 
+@pytest.mark.parametrize("template", ["{}@example.org", "https://example.org/a?q={}&case=123"])
+@pytest.mark.parametrize("bare", [False, True])
+def test_regex_masks_parts_around_an_existing_ref_without_wrapping_it(vault, scope, template, bare):
+    token = vault.get_or_create_token(scope, "[PERSON_NAME]", "Dana Vole")
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    masked = virtualizer.anonymize_text(scope, template.format(token.split(":")[1] if bare else token))
+    assert token in masked
+    assert "example.org" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == template.format("Dana Vole")
+
+
+def test_a_bare_reference_without_a_unique_owner_is_not_expanded(vault, scope):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(vault, "_generate_short_id", lambda _prefix: "pe_123abcde")
+        vault.get_or_create_token(scope, "[PERSON_NAME]", "Dana Vole")
+        vault.get_or_create_token(scope, "[PERSONAL_ID]", "Test identity")
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    source = "https://example.org/a?q=pe_123abcde&case=123"
+    masked = virtualizer.anonymize_text(scope, source)
+    assert "pe_123abcde" in masked
+    assert "example.org" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == source
+
+
+@pytest.mark.parametrize(("source", "category"), [
+    ("jd_19870512@example.test", "email_ref"),
+    ("https://example.test/id/ab_1234abcd", "url_ref"),
+])
+def test_an_unknown_bare_shape_does_not_split_a_regex_value(vault, scope, source, category):
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    masked = virtualizer.anonymize_text(scope, source)
+    assert masked.startswith(category + ":")
+    assert REF_TOKEN_PATTERN.fullmatch(masked)
+    assert virtualizer.rehydrate_text(scope, masked) == source
+
+
+def test_the_known_value_matcher_can_mask_an_unknown_bare_shape(vault, scope):
+    source = "jd_19870512"
+    token = vault.get_or_create_token(scope, "[PERSONAL_ID]", source)
+    assert PIIVirtualizer(vault).anonymize_text(scope, source) == token
+
+
+def test_second_pass_does_not_exempt_an_unknown_bare_shape(vault, scope):
+    from traciora_pii._detector_common import LLMFinding
+
+    class Detector:
+        def detect(self, text):
+            return [LLMFinding("synthetic", 0, len(text), "[PERSONAL_ID]", None)]
+
+    source = "jd_19870512"
+    pii = PIIVirtualizer(vault, second_pass_detector=Detector())
+    masked = pii.anonymize_text(scope, source)
+    assert masked.startswith("personal_id_ref:")
+    assert pii.rehydrate_text(scope, masked) == source
+
+
+def test_the_exemption_and_input_have_the_same_normalization(vault, scope):
+    name = "Аптека №5"
+    vault.get_or_create_token(scope, "[PERSON_NAME]", "Аптека No5")
+    pii = PIIVirtualizer(vault, exempt_values=lambda: {name})
+    assert pii.anonymize_text(scope, name) == "Аптека No5"
+
+
+def test_exempt_values_are_current_and_match_exact_whole_words(vault, scope):
+    import re
+    from traciora_pii._detector_common import LLMFinding
+
+    class Detector:
+        def detect(self, text):
+            return [LLMFinding("synthetic", match.start(), match.end(), "[PERSON_NAME]", None)
+                    for match in re.finditer(r"Dana Voles?|dana vole", text)]
+
+    exempt = {"Dana Vole", "reception@example.org"}
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=Detector(), exempt_values=lambda: exempt)
+    # An existing token is still valid when it comes from the model, but the known-value
+    # phase must leave that same exact spelling visible when it is now a site name.
+    vault.get_or_create_token(scope, "[STREET_ADDRESS]", "Dana Vole")
+    vault.get_or_create_token(scope, "[PERSON_NAME]", "Vole")
+    vault.get_or_create_token(scope, "[EMAIL]", "reception@example.org")
+    source = "Dana Vole; reception@example.org; dana vole; Dana Voles"
+    masked = virtualizer.anonymize_text(scope, source)
+    assert masked.startswith("Dana Vole; reception@example.org;")
+    assert "dana vole" not in masked and "Dana Voles" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == source
+    exempt.clear()
+    assert "Dana Vole" not in virtualizer.anonymize_text(scope, "Dana Vole")
+
+
+def test_structured_batch_keeps_the_ordered_detector_inputs(vault, scope):
+    from traciora_pii._detector_common import LLMFinding
+    from traciora_pii.runtime import SharedSecondPass
+
+    class Detector:
+        def __init__(self):
+            self.batches, self.scalars = [], []
+
+        def findings(self, text):
+            for value, context in (("Dana Vole", "Meet"), ("Robin Lake", "person_name_ref:"),
+                                   ("Station House", "Leave")):
+                if value in text and context in text:
+                    start = text.index(value)
+                    return [LLMFinding("synthetic", start, start + len(value), "[PERSON_NAME]", None)]
+            return []
+
+        def detect(self, text):
+            self.scalars.append(text)
+            return self.findings(text)
+
+        def detect_many(self, texts):
+            self.batches.append(texts)
+            return [self.findings(text) for text in texts]
+
+    detector = Detector()
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=SharedSecondPass(detector),
+                                exempt_values=lambda: {"Station House"})
+    first, second, third = ("Meet Dana Vole", "Tell Dana Vole to call Robin Lake",
+                            "Leave a note for Station House")
+    payload = {"items": [first, second, second, third], "again": first, "empty": ""}
+    masked = virtualizer.anonymize_structured(scope, payload)
+    assert detector.batches == [[first, second, third]]
+    # Leaf B recognizes Robin only when the name learned in A has already become a ref.
+    assert all("Dana Vole" not in text and "Robin Lake" not in text for text in masked["items"])
+    assert masked["items"][-1] == third
+    assert any(text.startswith("Tell person_name_ref:") and text.endswith("call Robin Lake")
+               for text in detector.scalars)
+    assert len(detector.scalars) == 3
+    assert virtualizer.rehydrate_structured(scope, masked) == payload
+
+    vault.open_session("scalar")
+    sequential = {"items": [virtualizer.anonymize_text("scalar", text) for text in payload["items"]],
+                  "again": virtualizer.anonymize_text("scalar", first), "empty": ""}
+    def normalized(text):
+        return REF_TOKEN_PATTERN.sub("[PERSON]", text)
+
+    assert list(map(normalized, masked["items"])) == list(map(normalized, sequential["items"]))
+    assert virtualizer.rehydrate_structured("scalar", sequential) == payload
+
+
+def test_a_failed_speculative_batch_reports_only_its_type_and_retries(vault, scope, caplog):
+    class Detector:
+        def __init__(self):
+            self.scalar = []
+
+        def detect_many(self, texts):
+            raise TimeoutError("synthetic private detector detail")
+
+        def detect(self, text):
+            self.scalar.append(text)
+            return []
+
+    detector = Detector()
+    pii = PIIVirtualizer(vault, second_pass_detector=detector)
+    source = ["First harmless line", "Second harmless line"]
+    assert pii.anonymize_structured(scope, source) == source
+    assert detector.scalar == source
+    assert "PII detector batch failed (TimeoutError)" in caplog.text
+    assert "synthetic private detector detail" not in caplog.text
+    assert all(text not in caplog.text for text in source)
+
+
+def test_structured_regex_only_still_matches_an_ordered_walk(vault, scope):
+    virtualizer = PIIVirtualizer(vault)
+    source = ["Dana at dana@example.org", "dana@example.org", ""]
+    masked = virtualizer.anonymize_structured(scope, source)
+    assert masked == [virtualizer.anonymize_text(scope, text) for text in source]
+    assert virtualizer.rehydrate_structured(scope, masked) == source
+
+
+def test_second_pass_batch_and_scalar_only_read_regex_prepared_inputs(vault, scope):
+    from traciora_pii.config import PIIConfig
+    from traciora_pii.runtime import SharedSecondPass
+
+    class Detector:
+        def __init__(self):
+            self.batches, self.scalar = [], []
+
+        def detect_many(self, texts):
+            self.batches.append(texts)
+            return [[] for _ in texts]
+
+        def detect(self, text):
+            self.scalar.append(text)
+            return []
+
+    detector = Detector()
+    config = PIIConfig().with_overrides({"detector": {"regex_policies": ["en"]}})
+    pii = PIIVirtualizer(vault, config=config, second_pass_detector=SharedSecondPass(detector),
+                         exempt_values=lambda: {"Station House"})
+    email, phone = "proof@example.org", "+1 (202) 555-0123"
+    payload = {"outer": [{"label": "Station House", "address": f"Write to {email}"}, f"Call {phone}"]}
+    safe = pii.anonymize_structured(scope, payload)
+    assert detector.batches == [["Station House"]]
+    assert len(detector.scalar) == 2 and all(REF_TOKEN_PATTERN.search(text) for text in detector.scalar)
+    for observed in [*detector.batches[0], *detector.scalar]:
+        assert email not in observed and phone not in observed
+    assert pii.rehydrate_structured(scope, safe) == payload
+
+
 @pytest.mark.parametrize("phone", ["030 55501234", "+7 495 555-01-23", "+1 (202) 555-0123"])
 @pytest.mark.parametrize("where", ["before", "after", "between"])
 def test_phone_next_to_uuid_round_trips(vault, scope, phone, where):
