@@ -120,6 +120,7 @@ class SharedSecondPass:
         detect_many = getattr(detector, "detect_many", None)
         if detect_many is not None:
             def locked_batch(texts: list[str]) -> list[list]:
+                """Predict independent sequences locally, before ordered vault writes."""
                 with self._lock:
                     return detect_many(texts)
 

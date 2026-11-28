@@ -181,7 +181,11 @@ class EncoderPIIDetector:
         return self.detect_many([text])[0]
 
     def detect_many(self, texts: list[str]) -> list[list[LLMFinding]]:
-        """Infer each text as its own sequence, batching windows across them."""
+        """Infer independent sequences in shared batches. This must run locally.
+
+        Speculative sequences may contain names that an earlier leaf would
+        replace with a token during ordered processing.
+        """
         if not any(texts):
             return [[] for text in texts]
         self.lm_calls += sum(bool(text) for text in texts)

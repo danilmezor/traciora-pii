@@ -296,10 +296,10 @@ class PIIVirtualizer:
                     with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
                         findings = detect_many(texts)
                     predicted = dict(zip(texts, findings, strict=True))
-                except Exception:
-                    # The speculative batch may include inputs that would
-                    # never reach the detector. Verify each actual input.
-                    pass
+                except Exception as exc:
+                    # A speculative input can differ from what the ordered
+                    # pass will see. Retry actual inputs without logging text.
+                    logger.warning("PII detector batch failed (%s); retrying actual inputs", type(exc).__name__)
         return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt, predicted))
 
     # ------------------------------------------------------------------

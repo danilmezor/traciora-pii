@@ -427,6 +427,28 @@ def test_structured_batch_keeps_the_ordered_detector_inputs(vault, scope):
     assert virtualizer.rehydrate_structured("scalar", sequential) == payload
 
 
+def test_a_failed_speculative_batch_reports_only_its_type_and_retries(vault, scope, caplog):
+    class Detector:
+        def __init__(self):
+            self.scalar = []
+
+        def detect_many(self, texts):
+            raise TimeoutError("synthetic private detector detail")
+
+        def detect(self, text):
+            self.scalar.append(text)
+            return []
+
+    detector = Detector()
+    pii = PIIVirtualizer(vault, second_pass_detector=detector)
+    source = ["First harmless line", "Second harmless line"]
+    assert pii.anonymize_structured(scope, source) == source
+    assert detector.scalar == source
+    assert "PII detector batch failed (TimeoutError)" in caplog.text
+    assert "synthetic private detector detail" not in caplog.text
+    assert all(text not in caplog.text for text in source)
+
+
 def test_structured_regex_only_still_matches_an_ordered_walk(vault, scope):
     virtualizer = PIIVirtualizer(vault)
     source = ["Dana at dana@example.org", "dana@example.org", ""]
