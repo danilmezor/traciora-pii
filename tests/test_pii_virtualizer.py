@@ -322,3 +322,22 @@ def test_a_phone_prediction_masks_only_the_parts_outside_the_uuid(vault, scope, 
     masked = pii.anonymize_text(scope, source)
     assert REF_TOKEN_PATTERN.sub("[PHONE]", masked) == ("[PHONE]" if before else "") + identifier + ("[PHONE]" if after else "")
     assert pii.rehydrate_text(scope, masked) == source
+
+
+def test_known_phone_token_beside_uuid_preserves_both(vault, scope, monkeypatch):
+    from traciora_pii._detector_common import LLMFinding
+
+    phone = "+12025550123"
+    identifier = "cafeaabb-cafe-4abc-8349-6571045f3075"
+    monkeypatch.setattr(vault, "_generate_short_id", lambda prefix: "ph_123abcde")
+    token = vault.get_or_create_token(scope, "[PHONE]", phone)
+
+    class Detector:
+        def detect(self, text):
+            start = text.index("8349-6571045")
+            return [LLMFinding("opf", start, start + 12, "[PHONE]", "")]
+
+    pii = PIIVirtualizer(vault, second_pass_detector=Detector())
+    safe = pii.anonymize_text(scope, phone + identifier)
+    assert safe == token + identifier
+    assert pii.rehydrate_text(scope, safe) == phone + identifier

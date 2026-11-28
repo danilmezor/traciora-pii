@@ -361,3 +361,12 @@ def test_canonical_uuid_and_neighboring_phone_have_distinct_spans(identifier):
     assert all(text[f.start:f.end] == phone for f in findings)
     email = identifier + "@example.org"
     assert redact_pii_text(email, detectors=detectors)[0] == "[EMAIL]"
+
+
+@pytest.mark.parametrize("text", [
+    "acafeaabb-cafe-4abc-8349-6571045f3075",
+    "cafeaabb-cafe-4abc-8349-6571045f3075F",
+])
+def test_longer_hex_identifiers_are_not_uuid_spans(text):
+    from traciora_pii.pii import _UUID
+    assert _UUID.search(text) is None

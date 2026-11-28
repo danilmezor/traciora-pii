@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import _UUID, PIIFinding, detect_pii
+from .pii import _UUID, _without_refs, PIIFinding, detect_pii
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -173,7 +173,7 @@ class PIIVirtualizer:
         # overlap would corrupt the vault — skip defensively.
         ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
 
-        identifiers = [m.span() for m in _UUID.finditer(text)]
+        identifiers = [m.span() for m in _UUID.finditer(_without_refs(text))]
         from ._masking_policy import category_is_excluded
         spans = []
         for finding in opf_findings:
