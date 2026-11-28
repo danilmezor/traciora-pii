@@ -363,6 +363,22 @@ def test_canonical_uuid_and_neighboring_phone_have_distinct_spans(identifier):
     assert redact_pii_text(email, detectors=detectors)[0] == "[EMAIL]"
 
 
+def test_card_pattern_cannot_take_the_uuid_tail_instead_of_the_phone(multi_detectors):
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    text = identifier + "0151-12345678"
+    redacted, findings = redact_pii_text(text, detectors=multi_detectors)
+    assert redacted == identifier + "[PHONE]"
+    assert all(finding.start == len(identifier) for finding in findings)
+
+
+def test_vin_pattern_cannot_take_the_uuid_tail(multi_detectors):
+    identifier = "12345678-cafe-4abc-8312-abcdef123456"
+    text = identifier + "78901"
+    assert redact_pii_text(text, detectors=multi_detectors) == (text, [])
+    url = f"https://example.test/items/{identifier}"
+    assert redact_pii_text(url, detectors=multi_detectors, excluded_categories=[])[0] == "[URL]"
+
+
 @pytest.mark.parametrize("text", [
     "acafeaabb-cafe-4abc-8349-6571045f3075",
     "cafeaabb-cafe-4abc-8349-6571045f3075F",

@@ -289,6 +289,41 @@ def test_phone_prediction_inside_a_task_uuid_preserves_the_id(vault, scope):
     assert virtualizer.anonymize_structured(scope, {"task": identifier}) == {"task": identifier}
 
 
+@pytest.mark.parametrize("template", ["{}@example.org", "https://example.org/a?q={}&case=123"])
+def test_regex_masks_parts_around_an_existing_ref_without_wrapping_it(vault, scope, template):
+    token = vault.get_or_create_token(scope, "[STREET_ADDRESS]", "Dana Vole")
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    masked = virtualizer.anonymize_text(scope, template.format(token))
+    assert token in masked
+    assert "example.org" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == template.format("Dana Vole")
+
+
+def test_exempt_values_are_current_and_match_exact_whole_words(vault, scope):
+    import re
+    from traciora_pii._detector_common import LLMFinding
+
+    class Detector:
+        def detect(self, text):
+            return [LLMFinding("synthetic", match.start(), match.end(), "[PERSON_NAME]", None)
+                    for match in re.finditer(r"Dana Voles?|dana vole", text)]
+
+    exempt = {"Dana Vole", "reception@example.org"}
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=Detector(), exempt_values=lambda: exempt)
+    # An existing token is still valid when it comes from the model, but the known-value
+    # phase must leave that same exact spelling visible when it is now a site name.
+    vault.get_or_create_token(scope, "[STREET_ADDRESS]", "Dana Vole")
+    vault.get_or_create_token(scope, "[PERSON_NAME]", "Vole")
+    vault.get_or_create_token(scope, "[EMAIL]", "reception@example.org")
+    source = "Dana Vole; reception@example.org; dana vole; Dana Voles"
+    masked = virtualizer.anonymize_text(scope, source)
+    assert masked.startswith("Dana Vole; reception@example.org;")
+    assert "dana vole" not in masked and "Dana Voles" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == source
+    exempt.clear()
+    assert "Dana Vole" not in virtualizer.anonymize_text(scope, "Dana Vole")
+
+
 @pytest.mark.parametrize("phone", ["030 55501234", "+7 495 555-01-23", "+1 (202) 555-0123"])
 @pytest.mark.parametrize("where", ["before", "after", "between"])
 def test_phone_next_to_uuid_round_trips(vault, scope, phone, where):

@@ -85,10 +85,12 @@ class PIIVirtualizer:
         excluded_categories: Iterable[str] | None = None,
         config: PIIConfig | None = None,
         map_text: Callable[[Any, Callable[[str], str]], Any] | None = None,
+        exempt_values: Callable[[], Iterable[str]] | None = None,
     ):
         from ._masking_policy import resolve_exclusions
         self._config = config
         self._map_text = map_text
+        self._exempt_values = exempt_values
         self._excluded_categories = resolve_exclusions(
             config.detector.excluded_categories
             if config is not None and excluded_categories is None else excluded_categories
@@ -106,7 +108,7 @@ class PIIVirtualizer:
     # Anonymize (raw PII → ref tokens)
     # ------------------------------------------------------------------
 
-    def _replace_known_values(self, session_scope_key: str, text: str) -> str:
+    def _replace_known_values(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
         known = self._vault.known_values(session_scope_key)
         if not known.values:
             return text
@@ -115,7 +117,7 @@ class PIIVirtualizer:
         except KeyError:
             matcher = _KnownValueMatcher.build(known.values, self._excluded_categories)
             self._known_matchers[known] = matcher
-        return matcher.replace(text) if matcher is not None else text
+        return matcher.replace(text, _exempt_spans(text, exempt)) if matcher is not None else text
 
     def anonymize_text(self, session_scope_key: str, text: str) -> str:
         """Replace raw PII spans in *text* with deterministic ref tokens.
@@ -126,6 +128,9 @@ class PIIVirtualizer:
         detector passes write through the same vault, so downstream
         rehydration is identical.
         """
+        return self._anonymize_text(session_scope_key, text, tuple(self._exempt_values()) if self._exempt_values else ())
+
+    def _anonymize_text(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
         if not text:
             return text
 
@@ -134,9 +139,17 @@ class PIIVirtualizer:
         # value the detectors would miss in this text (a plate without its
         # keyword, a name the model does not catch twice) never goes back
         # out as text.
-        text = self._replace_known_values(session_scope_key, text)
+        text = self._replace_known_values(session_scope_key, text, exempt)
+        ref_spans = [m.span() for m in _RESTORABLE.finditer(text)]
+        exempt_spans = _exempt_spans(text, exempt)
         findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
-        merged = _merge_findings(findings) if findings else []
+        # Mask both sides of an existing token if a detector found one larger
+        # value, such as a URL or email. Restoration reads the pieces in order.
+        pieces = (PIIFinding(finding.detector, start, end, finding.placeholder)
+                  for finding in findings
+                  if not _inside_exemption(finding.start, finding.end, exempt_spans)
+                  for start, end in _outside_tokens(finding.start, finding.end, ref_spans))
+        merged = _merge_findings(sorted(pieces, key=lambda finding: (finding.start, finding.end)))
 
         # Build result from right to left to preserve offsets. One vault
         # transaction for the whole loop: one commit, nothing left on failure.
@@ -155,10 +168,10 @@ class PIIVirtualizer:
         # Second pass on the regex-tokenized text. A failure propagates: a
         # turn the configured detector did not cover is never returned.
         if self._second_pass is not None:
-            result = self._apply_second_pass(session_scope_key, result)
+            result = self._apply_second_pass(session_scope_key, result, exempt)
         return result
 
-    def _apply_second_pass(self, session_scope_key: str, text: str) -> str:
+    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
         """Run the second-pass detector over *text* and substitute findings."""
         with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
             opf_findings = self._second_pass.detect(text) or []
@@ -171,7 +184,8 @@ class PIIVirtualizer:
         # overlap a ref token (e.g. tagging the hex suffix of
         # ``phone_ref:ph_ad3a2c1a`` as a different class). Any such
         # overlap would corrupt the vault — skip defensively.
-        ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
+        ref_spans = [m.span() for m in _RESTORABLE.finditer(text)]
+        exempt_spans = _exempt_spans(text, exempt)
 
         identifiers = [m.span() for m in _UUID.finditer(_without_refs(text))]
         from ._masking_policy import category_is_excluded
@@ -180,6 +194,8 @@ class PIIVirtualizer:
             if category_is_excluded(finding.placeholder, self._excluded_categories):
                 continue
             if any(finding.start < end and start < finding.end for start, end in ref_spans):
+                continue
+            if _inside_exemption(finding.start, finding.end, exempt_spans):
                 continue
             start, end = finding.start, finding.end
             if finding.placeholder == "[PHONE]":
@@ -212,7 +228,8 @@ class PIIVirtualizer:
 
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively anonymize PII in dicts, lists, and strings."""
-        return self._walk(payload, lambda s: self.anonymize_text(session_scope_key, s))
+        exempt = tuple(self._exempt_values()) if self._exempt_values else ()
+        return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt))
 
     # ------------------------------------------------------------------
     # Rehydrate (ref tokens → raw PII)
@@ -247,7 +264,8 @@ class PIIVirtualizer:
 
     def anonymize_content(self, session_scope_key: str, content: Any) -> Any:
         mapper = self._map_text or self._walk
-        return mapper(content, lambda text: self.anonymize_text(session_scope_key, text))
+        exempt = tuple(self._exempt_values()) if self._exempt_values else ()
+        return mapper(content, lambda text: self._anonymize_text(session_scope_key, text, exempt))
 
     def rehydrate_content(self, session_scope_key: str, content: Any) -> Any:
         mapper = self._map_text or self._walk
@@ -334,6 +352,28 @@ def build_second_pass_detector(
         f"detector.second_pass={mode!r} is not a valid mode. "
         "Expected one of: none, opf, encoder, llm, presidio.",
     )
+
+
+def _exempt_spans(text: str, exempt: tuple[str, ...]) -> list[tuple[int, int]]:
+    return [match.span() for value in exempt if value
+            for match in re.finditer(rf"(?<!\w){re.escape(value)}(?!\w)", text)]
+
+
+def _inside_exemption(start: int, end: int, exempt: list[tuple[int, int]]) -> bool:
+    return any(left <= start and end <= right for left, right in exempt)
+
+
+def _outside_tokens(start: int, end: int, tokens: list[tuple[int, int]]) -> Iterable[tuple[int, int]]:
+    for left, right in tokens:
+        if left >= end:
+            break
+        if right <= start:
+            continue
+        if start < left:
+            yield start, left
+        start = right
+    if start < end:
+        yield start, end
 
 
 def _merge_findings(findings):
@@ -463,8 +503,8 @@ class _KnownValueMatcher:
         pattern = _compile_uncached(f"{_KNOWN_LEFT}(?:{union}){_KNOWN_RIGHT}", 0)
         return cls(pattern, folded, exact)
 
-    def replace(self, text: str) -> str:
-        token_spans = [m.span() for m in REF_TOKEN_PATTERN.finditer(text)]
+    def replace(self, text: str, exempt: list[tuple[int, int]]) -> str:
+        token_spans = [m.span() for m in _RESTORABLE.finditer(text)]
         token_starts = [start for start, _ in token_spans]
         parts: list[str] = []
         pos = 0
@@ -475,6 +515,8 @@ class _KnownValueMatcher:
                 i + 1 < len(token_spans) and token_spans[i + 1][0] < end
             ):
                 continue  # never inside an existing token
+            if _inside_exemption(start, end, exempt):
+                continue
             span = match.group()
             token = self._folded.get(_normalize_value(span)) or self._exact.get(_significant(span))
             if token is None:

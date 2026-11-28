@@ -147,20 +147,27 @@ def detect_pii(
         else:
             kept = [i for i, ch in enumerate(text) if ch not in _ZERO_WIDTH]
             scan = "".join(text[i] for i in kept)
-        # A phone matcher can consume the end of an ID and the start of a
-        # real neighboring phone in one match. Mask first to preserve both
-        # the neighboring match and its offsets. Other detectors still see
-        # the original text (e.g. an email with a UUID in its local part).
-        phone_scan = _UUID.sub("x" * 36, _without_refs(scan)) if "-" in scan else scan
+        # A numeric matcher can consume the end of an ID and a real neighboring
+        # value in one match. Whole emails and URLs may legitimately contain IDs.
+        refs_blanked = _without_refs(scan)
+        identifiers = [match.span() for match in _UUID.finditer(refs_blanked)] if "-" in scan else []
+        uuid_scan, phone_scan = scan, refs_blanked
+        for start, end in reversed(identifiers):
+            blank = "x" * (end - start)
+            uuid_scan = uuid_scan[:start] + blank + uuid_scan[end:]
+            phone_scan = phone_scan[:start] + blank + phone_scan[end:]
         findings: list[PIIFinding] = []
         active = (list(detectors) if detectors is not None else
                   configured_detectors(config) if config is not None else _get_default_detectors())
         for detector in active:
             if category_is_excluded(detector.placeholder, excluded):
                 continue
-            source = phone_scan if detector.placeholder == "[PHONE]" else scan
+            embeds_ids = detector.placeholder in ("[EMAIL]", "[URL]")
+            source = scan if embeds_ids else phone_scan if detector.placeholder == "[PHONE]" else uuid_scan
             for match in detector.pattern.finditer(source):
                 start, end = match.span()
+                if not embeds_ids and any(start < right and left < end for left, right in identifiers):
+                    continue
                 if not _keyword_ok(scan, start, end, detector):
                     continue
                 if detector.validator is not None and not detector.validator(scan[start:end]):
