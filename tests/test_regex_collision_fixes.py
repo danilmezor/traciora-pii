@@ -363,6 +363,59 @@ def test_canonical_uuid_and_neighboring_phone_have_distinct_spans(identifier):
     assert redact_pii_text(email, detectors=detectors)[0] == "[EMAIL]"
 
 
+def test_card_pattern_cannot_take_the_uuid_tail_instead_of_the_phone(multi_detectors):
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    text = identifier + "0151-12345678"
+    redacted, findings = redact_pii_text(text, detectors=multi_detectors)
+    assert redacted == identifier + "[PHONE]"
+    assert all(finding.start == len(identifier) for finding in findings)
+
+
+def test_vin_pattern_cannot_take_the_uuid_tail(multi_detectors):
+    identifier = "12345678-cafe-4abc-8312-abcdef123456"
+    text = identifier + "78901"
+    assert redact_pii_text(text, detectors=multi_detectors) == (text, [])
+    url = f"https://example.test/items/{identifier}"
+    assert redact_pii_text(url, detectors=multi_detectors, excluded_categories=[])[0] == "[URL]"
+
+
+@pytest.mark.parametrize(("value", "category"), [
+    ("DE89370400440532013000", "[IBAN]"),
+    ("5555-5555-5555-4444", "[CARD]"),
+])
+def test_word_boundary_is_kept_when_a_value_is_glued_before_a_uuid(multi_detectors, value, category):
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    text = value + identifier
+    assert redact_pii_text(text, detectors=multi_detectors)[0] == category + identifier
+
+
+def test_a_valid_iban_touching_a_uuid_does_not_look_like_a_uuid_suffix(multi_detectors):
+    first = "12345678-cafe-4abc-8312-123456789012"
+    second = "00000000-0000-4000-8000-000000000000"
+    iban = "DE89370400440532013000"
+    assert redact_pii_text(first + iban + second, detectors=multi_detectors)[0] == first + "[IBAN]" + second
+
+
+def test_a_grouped_card_keeps_its_boundary_after_a_uuid_and_join_character(multi_detectors):
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    card = "4111 1111 1111 1111"
+    assert redact_pii_text(identifier + "x" + card, detectors=multi_detectors)[0] == identifier + "x[CARD]"
+    assert redact_pii_text(identifier + "x" + card + "x" + identifier, detectors=multi_detectors)[0] == (
+        identifier + "x[CARD]x" + identifier
+    )
+
+
+@pytest.mark.parametrize("language", ["en", "de", "ru"])
+def test_parenthesized_local_phone_is_masked_beside_a_uuid(language):
+    from traciora_pii.policies.loader import compile_multi_regex_policy
+
+    detectors = compile_multi_regex_policy((language,))
+    identifier = "12345678-cafe-4abc-8312-123456789012"
+    phone = "(020) 7946 0958"
+    assert redact_pii_text(phone, detectors=detectors)[0] == "[PHONE]"
+    assert redact_pii_text(f"{phone} {identifier}", detectors=detectors)[0] == f"[PHONE] {identifier}"
+
+
 @pytest.mark.parametrize("text", [
     "acafeaabb-cafe-4abc-8349-6571045f3075",
     "cafeaabb-cafe-4abc-8349-6571045f3075F",
