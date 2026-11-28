@@ -12,7 +12,7 @@ from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import _UUID, PIIFinding, detect_pii
+from .pii import _UUID, _without_refs, PIIFinding, detect_pii
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -173,37 +173,41 @@ class PIIVirtualizer:
         # overlap would corrupt the vault — skip defensively.
         ref_spans = [(m.start(), m.end()) for m in REF_TOKEN_PATTERN.finditer(text)]
 
-        phone_protected = ref_spans + [m.span() for m in _UUID.finditer(text)]
-
-        def protected(finding) -> bool:
-            spans = phone_protected if finding.placeholder == "[PHONE]" else ref_spans
-            return any(finding.start < end and start < finding.end for start, end in spans)
-
-        # Sort ascending then walk right-to-left for offset stability.
+        identifiers = [m.span() for m in _UUID.finditer(_without_refs(text))]
         from ._masking_policy import category_is_excluded
-        ordered = sorted(
-            (f for f in opf_findings
-             if not category_is_excluded(f.placeholder, self._excluded_categories)),
-            key=lambda f: (f.start, f.end),
-        )
+        spans = []
+        for finding in opf_findings:
+            if category_is_excluded(finding.placeholder, self._excluded_categories):
+                continue
+            if any(finding.start < end and start < finding.end for start, end in ref_spans):
+                continue
+            start, end = finding.start, finding.end
+            if finding.placeholder == "[PHONE]":
+                for left, right in identifiers:
+                    if right <= start:
+                        continue
+                    if left >= end:
+                        break
+                    if start < left:
+                        spans.append((start, left, finding.placeholder, None))
+                    start = right
+            if start < end:
+                # The detector's lemma describes its original span, never a clipped phone.
+                spans.append((start, end, finding.placeholder, finding.lemma if start == finding.start else None))
         # Inference above runs outside the vault lock; the token writes share
         # one transaction of their own.
         result = text
         with self._vault.batch():
-            for finding in reversed(ordered):
-                raw = result[finding.start:finding.end]
-                if not raw:
-                    continue
-                if protected(finding):
-                    continue
+            for start, end, placeholder, lemma in sorted(spans, key=lambda s: (s[0], s[1]), reverse=True):
+                raw = text[start:end]
                 ref_token = self._vault.get_or_create_token(
                     session_scope_key,
-                    finding.placeholder,
+                    placeholder,
                     raw,
                     source="anonymize-opf",
-                    normalization_key=finding.lemma,
+                    normalization_key=lemma,
                 )
-                result = result[:finding.start] + ref_token + result[finding.end:]
+                result = result[:start] + ref_token + result[end:]
         return result
 
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:

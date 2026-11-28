@@ -41,11 +41,19 @@ class PIIFinding:
     placeholder: str
 
 
-# Internal IDs may contain entire local phone numbers between two hyphens.
+# The fixed groups identify the UUID even when a neighboring phone starts or ends in a hex digit.
 _UUID = re.compile(
-    r"(?<![0-9a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![0-9a-f])",
+    r"(?<![a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![a-f])",
     re.IGNORECASE | re.ASCII,
 )
+
+def _without_refs(text: str) -> str:
+    """Keep offsets and boundaries when a neighboring value has already become a vault token."""
+    if "_ref:" not in text:
+        return text
+    from .pii_vault import REF_TOKEN_PATTERN
+    return REF_TOKEN_PATTERN.sub(lambda match: "x" * len(match.group()), text)
+
 
 _DEFAULT_DETECTORS_CACHE: list[PIIDetector] | None = None
 
@@ -143,7 +151,7 @@ def detect_pii(
         # real neighboring phone in one match. Mask first to preserve both
         # the neighboring match and its offsets. Other detectors still see
         # the original text (e.g. an email with a UUID in its local part).
-        phone_scan = _UUID.sub("x" * 36, scan) if "-" in scan else scan
+        phone_scan = _UUID.sub("x" * 36, _without_refs(scan)) if "-" in scan else scan
         findings: list[PIIFinding] = []
         active = (list(detectors) if detectors is not None else
                   configured_detectors(config) if config is not None else _get_default_detectors())
