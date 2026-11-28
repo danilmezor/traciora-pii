@@ -121,6 +121,14 @@ class SharedSecondPass:
         with self._lock:
             return self._detector.detect(text)
 
+    def detect_many(self, texts: list[str]) -> list[list] | None:
+        """One lock for a batch of independent sequences when the detector supports it."""
+        detect_many = getattr(self._detector, "detect_many", None)
+        if detect_many is None:
+            return None
+        with self._lock:
+            return detect_many(texts)
+
     def close(self) -> None:
         with self._lock:
             self._detector.close()

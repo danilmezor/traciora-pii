@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
 from .pii import _uuid_spans, _without_refs, PIIFinding, detect_pii
+from .pii_leak_guard import extract_strings
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -153,7 +154,8 @@ class PIIVirtualizer:
         """
         return self._anonymize_text(session_scope_key, text, _exempt_pattern(self._exempt_values))
 
-    def _anonymize_text(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
+    def _anonymize_text(self, session_scope_key: str, text: str, exempt: re.Pattern | None,
+                        predicted: dict[str, list] | None = None) -> str:
         if not text:
             return text
 
@@ -197,13 +199,19 @@ class PIIVirtualizer:
         # Second pass on the regex-tokenized text. A failure propagates: a
         # turn the configured detector did not cover is never returned.
         if self._second_pass is not None:
-            result = self._apply_second_pass(session_scope_key, result, exempt)
+            if predicted is not None and result in predicted:
+                opf_findings = predicted[result]
+            else:
+                with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
+                    opf_findings = self._second_pass.detect(result) or []
+                if predicted is not None:
+                    predicted[result] = opf_findings
+            result = self._apply_second_pass(session_scope_key, result, exempt, opf_findings)
         return result
 
-    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
-        """Run the second-pass detector over *text* and substitute findings."""
-        with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
-            opf_findings = self._second_pass.detect(text) or []
+    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: re.Pattern | None,
+                           opf_findings: list) -> str:
+        """Substitute second-pass findings over the exact input they describe."""
         if not opf_findings:
             return text
 
@@ -259,7 +267,26 @@ class PIIVirtualizer:
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively anonymize PII in dicts, lists, and strings."""
         exempt = _exempt_pattern(self._exempt_values)
-        return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt))
+        predicted = None
+        detect_many = getattr(self._second_pass, "detect_many", None)
+        if detect_many is not None:
+            # Predict byte-identical second-pass inputs without learning new
+            # values. The ordinary in-order walk can learn a token in one leaf
+            # and change a later leaf. A changed detector input is read afresh.
+            texts = list(dict.fromkeys(
+                self._replace_known_values(session_scope_key, _normalize_input(text), exempt)
+                for text in extract_strings(payload) if text))
+            if texts:
+                try:
+                    with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
+                        findings = detect_many(texts)
+                    if findings is not None:
+                        predicted = dict(zip(texts, findings, strict=True))
+                except Exception:
+                    # The speculative batch may include inputs that would
+                    # never reach the detector. Verify each actual input.
+                    pass
+        return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt, predicted))
 
     # ------------------------------------------------------------------
     # Rehydrate (ref tokens → raw PII)

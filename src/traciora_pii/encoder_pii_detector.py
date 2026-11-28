@@ -9,7 +9,9 @@ the family's label scheme.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -176,13 +178,22 @@ class EncoderPIIDetector:
         """Return ``[PERSON_NAME]`` / ``[STREET_ADDRESS]`` spans; raise when the model cannot run."""
         if not text:
             return []
-        self.lm_calls += 1
+        return self.detect_many([text])[0]
+
+    def detect_many(self, texts: list[str]) -> list[list[LLMFinding]]:
+        """Infer each text as its own sequence, batching windows across them."""
+        if not any(texts):
+            return [[] for text in texts]
+        self.lm_calls += sum(bool(text) for text in texts)
         try:
-            fragments = self._fragments(text)
+            groups = self._fragments_many(texts)
         except Exception as exc:
             raise EncoderInferenceError(
                 f"Encoder inference failed on device={self.device}: {type(exc).__name__}: {exc}",
             ) from exc
+        return [self._findings(text, fragments) for text, fragments in zip(texts, groups, strict=True)]
+
+    def _findings(self, text: str, fragments: list[Fragment]) -> list[LLMFinding]:
         findings = []
         kept = [f for f in fragments if f.score >= self.threshold]
         for placeholder, start, end in group_fragments(text, kept, self.family):
@@ -198,41 +209,44 @@ class EncoderPIIDetector:
     def close(self) -> None:
         self._model = None
 
-    def _window_probs(self, ids: list[int], bounds: list[tuple[int, int]]) -> list["torch.Tensor"]:
+    def _window_probs(self, sequences: Iterable[list[int]]) -> Iterator["torch.Tensor"]:
         """Label probabilities per window over its content tokens, in batches padded to the longest."""
         torch = self._torch
-        probs = []
-        for first in range(0, len(bounds), self.batch_windows):
-            batch = bounds[first:first + self.batch_windows]
-            width = max(end - start for start, end in batch) + 2
+        windows = iter(sequences)
+        while batch := list(islice(windows, self.batch_windows)):
+            width = max(map(len, batch)) + 2
             input_ids = torch.full((len(batch), width), self._tokenizer.pad_token_id, dtype=torch.long)
             attention = torch.zeros((len(batch), width), dtype=torch.long)
-            for row, (start, end) in enumerate(batch):
-                input_ids[row, :end - start + 2] = torch.tensor([self._open_id, *ids[start:end], self._close_id])
-                attention[row, :end - start + 2] = 1
+            for row, tokens in enumerate(batch):
+                input_ids[row, :len(tokens) + 2] = torch.tensor([self._open_id, *tokens, self._close_id])
+                attention[row, :len(tokens) + 2] = 1
             inputs = {"input_ids": input_ids.to(self.device), "attention_mask": attention.to(self.device)}
             if self.family == "rubert":
                 inputs["token_type_ids"] = torch.zeros_like(inputs["input_ids"])
             with torch.inference_mode():
                 logits = self._model(**inputs).logits.float().cpu()
-            for row, (start, end) in enumerate(batch):
-                probs.append(logits[row, 1:end - start + 1].softmax(-1))
-        return probs
+            for row, tokens in enumerate(batch):
+                yield logits[row, 1:len(tokens) + 1].softmax(-1)
 
-    def _fragments(self, text: str) -> list[Fragment]:
-        torch = self._torch
-        encoding = self._tokenizer(text, add_special_tokens=False, return_offsets_mapping=True, verbose=False)
-        ids = encoding["input_ids"]
-        offsets = encoding["offset_mapping"]
-        word_ids = encoding.word_ids()
-        n = len(ids)
-        bounds = window_bounds(n)
+    def _fragments_many(self, texts: list[str]) -> list[list[Fragment]]:
+        encoding = self._tokenizer(texts, add_special_tokens=False, return_offsets_mapping=True, verbose=False)
+        all_ids = encoding["input_ids"]
+        all_bounds = [window_bounds(len(ids)) for ids in all_ids]
+        windows = iter(self._window_probs(
+            ids[start:end] for ids, bounds in zip(all_ids, all_bounds, strict=True) for start, end in bounds))
+        return [self._fragments(text, encoding["offset_mapping"][index], encoding.word_ids(batch_index=index),
+                                bounds, islice(windows, len(bounds)))
+                for index, (text, bounds) in enumerate(zip(texts, all_bounds, strict=True))]
+
+    def _fragments(self, text: str, offsets, word_ids, bounds, windows) -> list[Fragment]:
         if not bounds:
             return []
 
+        torch = self._torch
+        n = len(offsets)
         stitched = torch.zeros((n, len(self._labels)))
         best = torch.full((n,), -1.0)
-        for (start, end), window in zip(bounds, self._window_probs(ids, bounds)):
+        for (start, end), window in zip(bounds, windows, strict=True):
             positions = torch.arange(start, end, dtype=torch.float32)
             from_left = positions - start if start > 0 else torch.full_like(positions, float("inf"))
             from_right = (end - 1) - positions if end < n else torch.full_like(positions, float("inf"))

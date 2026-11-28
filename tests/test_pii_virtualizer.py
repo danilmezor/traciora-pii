@@ -377,6 +377,64 @@ def test_exempt_values_are_current_and_match_exact_whole_words(vault, scope):
     assert "Dana Vole" not in virtualizer.anonymize_text(scope, "Dana Vole")
 
 
+def test_structured_batch_keeps_the_ordered_detector_inputs(vault, scope):
+    from traciora_pii._detector_common import LLMFinding
+    from traciora_pii.runtime import SharedSecondPass
+
+    class Detector:
+        def __init__(self):
+            self.batches, self.scalars = [], []
+
+        def findings(self, text):
+            for value, context in (("Dana Vole", "Meet"), ("Robin Lake", "person_name_ref:"),
+                                   ("Station House", "Leave")):
+                if value in text and context in text:
+                    start = text.index(value)
+                    return [LLMFinding("synthetic", start, start + len(value), "[PERSON_NAME]", None)]
+            return []
+
+        def detect(self, text):
+            self.scalars.append(text)
+            return self.findings(text)
+
+        def detect_many(self, texts):
+            self.batches.append(texts)
+            return [self.findings(text) for text in texts]
+
+    detector = Detector()
+    virtualizer = PIIVirtualizer(vault, second_pass_detector=SharedSecondPass(detector),
+                                exempt_values=lambda: {"Station House"})
+    first, second, third = ("Meet Dana Vole", "Tell Dana Vole to call Robin Lake",
+                            "Leave a note for Station House")
+    payload = {"items": [first, second, second, third], "again": first, "empty": ""}
+    masked = virtualizer.anonymize_structured(scope, payload)
+    assert detector.batches == [[first, second, third]]
+    # Leaf B recognizes Robin only when the name learned in A has already become a ref.
+    assert all("Dana Vole" not in text and "Robin Lake" not in text for text in masked["items"])
+    assert masked["items"][-1] == third
+    assert any(text.startswith("Tell person_name_ref:") and text.endswith("call Robin Lake")
+               for text in detector.scalars)
+    assert len(detector.scalars) == 3
+    assert virtualizer.rehydrate_structured(scope, masked) == payload
+
+    vault.open_session("scalar")
+    sequential = {"items": [virtualizer.anonymize_text("scalar", text) for text in payload["items"]],
+                  "again": virtualizer.anonymize_text("scalar", first), "empty": ""}
+    def normalized(text):
+        return REF_TOKEN_PATTERN.sub("[PERSON]", text)
+
+    assert list(map(normalized, masked["items"])) == list(map(normalized, sequential["items"]))
+    assert virtualizer.rehydrate_structured("scalar", sequential) == payload
+
+
+def test_structured_regex_only_still_matches_an_ordered_walk(vault, scope):
+    virtualizer = PIIVirtualizer(vault)
+    source = ["Dana at dana@example.org", "dana@example.org", ""]
+    masked = virtualizer.anonymize_structured(scope, source)
+    assert masked == [virtualizer.anonymize_text(scope, text) for text in source]
+    assert virtualizer.rehydrate_structured(scope, masked) == source
+
+
 @pytest.mark.parametrize("phone", ["030 55501234", "+7 495 555-01-23", "+1 (202) 555-0123"])
 @pytest.mark.parametrize("where", ["before", "after", "between"])
 def test_phone_next_to_uuid_round_trips(vault, scope, phone, where):
