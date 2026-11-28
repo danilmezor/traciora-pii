@@ -290,13 +290,27 @@ def test_phone_prediction_inside_a_task_uuid_preserves_the_id(vault, scope):
 
 
 @pytest.mark.parametrize("template", ["{}@example.org", "https://example.org/a?q={}&case=123"])
-def test_regex_masks_parts_around_an_existing_ref_without_wrapping_it(vault, scope, template):
-    token = vault.get_or_create_token(scope, "[STREET_ADDRESS]", "Dana Vole")
+@pytest.mark.parametrize("bare", [False, True])
+def test_regex_masks_parts_around_an_existing_ref_without_wrapping_it(vault, scope, template, bare):
+    token = vault.get_or_create_token(scope, "[PERSON_NAME]", "Dana Vole")
     virtualizer = PIIVirtualizer(vault, excluded_categories=[])
-    masked = virtualizer.anonymize_text(scope, template.format(token))
+    masked = virtualizer.anonymize_text(scope, template.format(token.split(":")[1] if bare else token))
     assert token in masked
     assert "example.org" not in masked
     assert virtualizer.rehydrate_text(scope, masked) == template.format("Dana Vole")
+
+
+def test_a_bare_reference_without_a_unique_owner_is_not_expanded(vault, scope):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(vault, "_generate_short_id", lambda _prefix: "pe_123abcde")
+        vault.get_or_create_token(scope, "[PERSON_NAME]", "Dana Vole")
+        vault.get_or_create_token(scope, "[PERSONAL_ID]", "Test identity")
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    for bare in ("pe_123abcde", "pe_765abcde"):
+        source = f"https://example.org/a?q={bare}&case=123"
+        masked = virtualizer.anonymize_text(scope, source)
+        assert "example.org" not in masked
+        assert virtualizer.rehydrate_text(scope, masked) == source
 
 
 def test_exempt_values_are_current_and_match_exact_whole_words(vault, scope):

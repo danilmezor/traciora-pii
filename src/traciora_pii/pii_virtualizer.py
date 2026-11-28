@@ -108,7 +108,7 @@ class PIIVirtualizer:
     # Anonymize (raw PII → ref tokens)
     # ------------------------------------------------------------------
 
-    def _replace_known_values(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
+    def _replace_known_values(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
         known = self._vault.known_values(session_scope_key)
         if not known.values:
             return text
@@ -128,9 +128,9 @@ class PIIVirtualizer:
         detector passes write through the same vault, so downstream
         rehydration is identical.
         """
-        return self._anonymize_text(session_scope_key, text, tuple(self._exempt_values()) if self._exempt_values else ())
+        return self._anonymize_text(session_scope_key, text, _exempt_pattern(self._exempt_values))
 
-    def _anonymize_text(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
+    def _anonymize_text(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
         if not text:
             return text
 
@@ -140,6 +140,17 @@ class PIIVirtualizer:
         # keyword, a name the model does not catch twice) never goes back
         # out as text.
         text = self._replace_known_values(session_scope_key, text, exempt)
+        # If clipping puts another ref beside a shorthand, its original word
+        # boundary disappears. Give it its full spelling while it still has one.
+        refs = list(_RESTORABLE.finditer(text))
+        if any(":" not in match.group() for match in refs):
+            full: dict[str, list[str]] = {}
+            for value in self._vault.known_values(session_scope_key).values:
+                full.setdefault(value.ref_token.split(":", 1)[1], []).append(value.ref_token)
+            for match in reversed(refs):
+                candidates = full.get(match.group(), [])
+                if len(candidates) == 1:
+                    text = text[:match.start()] + candidates[0] + text[match.end():]
         ref_spans = [m.span() for m in _RESTORABLE.finditer(text)]
         exempt_spans = _exempt_spans(text, exempt)
         findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
@@ -171,7 +182,7 @@ class PIIVirtualizer:
             result = self._apply_second_pass(session_scope_key, result, exempt)
         return result
 
-    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: tuple[str, ...]) -> str:
+    def _apply_second_pass(self, session_scope_key: str, text: str, exempt: re.Pattern | None) -> str:
         """Run the second-pass detector over *text* and substitute findings."""
         with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
             opf_findings = self._second_pass.detect(text) or []
@@ -228,7 +239,7 @@ class PIIVirtualizer:
 
     def anonymize_structured(self, session_scope_key: str, payload: Any) -> Any:
         """Recursively anonymize PII in dicts, lists, and strings."""
-        exempt = tuple(self._exempt_values()) if self._exempt_values else ()
+        exempt = _exempt_pattern(self._exempt_values)
         return self._walk(payload, lambda text: self._anonymize_text(session_scope_key, text, exempt))
 
     # ------------------------------------------------------------------
@@ -264,7 +275,7 @@ class PIIVirtualizer:
 
     def anonymize_content(self, session_scope_key: str, content: Any) -> Any:
         mapper = self._map_text or self._walk
-        exempt = tuple(self._exempt_values()) if self._exempt_values else ()
+        exempt = _exempt_pattern(self._exempt_values)
         return mapper(content, lambda text: self._anonymize_text(session_scope_key, text, exempt))
 
     def rehydrate_content(self, session_scope_key: str, content: Any) -> Any:
@@ -354,9 +365,18 @@ def build_second_pass_detector(
     )
 
 
-def _exempt_spans(text: str, exempt: tuple[str, ...]) -> list[tuple[int, int]]:
-    return [match.span() for value in exempt if value
-            for match in re.finditer(rf"(?<!\w){re.escape(value)}(?!\w)", text)]
+def _exempt_pattern(values: Callable[[], Iterable[str]] | None) -> re.Pattern | None:
+    if values is None:
+        return None
+    names = sorted(filter(None, set(values())), key=len, reverse=True)
+    if not names:
+        return None
+    union = "|".join(map(re.escape, names))
+    return _compile_uncached(rf"(?<!\w)(?=({union})(?!\w))", 0)
+
+
+def _exempt_spans(text: str, exempt: re.Pattern | None) -> list[tuple[int, int]]:
+    return [match.span(1) for match in exempt.finditer(text)] if exempt else []
 
 
 def _inside_exemption(start: int, end: int, exempt: list[tuple[int, int]]) -> bool:
