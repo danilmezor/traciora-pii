@@ -116,18 +116,18 @@ class SharedSecondPass:
     def __init__(self, detector):
         self._detector = detector
         self._lock = threading.Lock()
+        self.detect_many = None
+        detect_many = getattr(detector, "detect_many", None)
+        if detect_many is not None:
+            def locked_batch(texts: list[str]) -> list[list]:
+                with self._lock:
+                    return detect_many(texts)
+
+            self.detect_many = locked_batch
 
     def detect(self, text: str) -> list:
         with self._lock:
             return self._detector.detect(text)
-
-    def detect_many(self, texts: list[str]) -> list[list] | None:
-        """One lock for a batch of independent sequences when the detector supports it."""
-        detect_many = getattr(self._detector, "detect_many", None)
-        if detect_many is None:
-            return None
-        with self._lock:
-            return detect_many(texts)
 
     def close(self) -> None:
         with self._lock:

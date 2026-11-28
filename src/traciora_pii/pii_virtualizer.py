@@ -167,20 +167,8 @@ class PIIVirtualizer:
         text = self._replace_known_values(session_scope_key, text, exempt)
         # If clipping puts another ref beside a shorthand, its original word
         # boundary disappears. Give it its full spelling while it still has one.
-        read_known = partial(self._vault.known_values, session_scope_key)
-        for match, full in reversed(list(_protected_refs(text, read_known))):
-            if full is not None:
-                text = text[:match.start()] + full + text[match.end():]
-        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
-        exempt_spans = _exempt_spans(text, exempt)
-        findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
-        # Mask both sides of an existing token if a detector found one larger
-        # value, such as a URL or email. Restoration reads the pieces in order.
-        pieces = (PIIFinding(finding.detector, start, end, finding.placeholder)
-                  for finding in findings
-                  if not _inside_exemption(finding.start, finding.end, exempt_spans)
-                  for start, end in _outside_tokens(finding.start, finding.end, ref_spans))
-        merged = _merge_findings(sorted(pieces, key=lambda finding: (finding.start, finding.end)))
+        text = self._expand_known_shorthand(session_scope_key, text)
+        merged = self._regex_findings(session_scope_key, text, exempt)
 
         # Build result from right to left to preserve offsets. One vault
         # transaction for the whole loop: one commit, nothing left on failure.
@@ -208,6 +196,28 @@ class PIIVirtualizer:
                     predicted[result] = opf_findings
             result = self._apply_second_pass(session_scope_key, result, exempt, opf_findings)
         return result
+
+    def _expand_known_shorthand(self, scope: str, text: str) -> str:
+        read_known = partial(self._vault.known_values, scope)
+        for match, full in reversed(list(_protected_refs(text, read_known))):
+            if full is not None:
+                text = text[:match.start()] + full + text[match.end():]
+        return text
+
+    def _regex_findings(self, scope: str, text: str, exempt: re.Pattern | None) -> list[PIIFinding]:
+        findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
+        if not findings:
+            return []
+        read_known = partial(self._vault.known_values, scope)
+        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
+        exempt_spans = _exempt_spans(text, exempt)
+        # An email or URL can cross an existing token. Keep its maskable
+        # pieces separate so restoration reads them in order.
+        pieces = (PIIFinding(finding.detector, start, end, finding.placeholder)
+                  for finding in findings
+                  if not _inside_exemption(finding.start, finding.end, exempt_spans)
+                  for start, end in _outside_tokens(finding.start, finding.end, ref_spans))
+        return _merge_findings(sorted(pieces, key=lambda finding: (finding.start, finding.end)))
 
     def _apply_second_pass(self, session_scope_key: str, text: str, exempt: re.Pattern | None,
                            opf_findings: list) -> str:
@@ -273,15 +283,19 @@ class PIIVirtualizer:
             # Predict byte-identical second-pass inputs without learning new
             # values. The ordinary in-order walk can learn a token in one leaf
             # and change a later leaf. A changed detector input is read afresh.
-            texts = list(dict.fromkeys(
-                self._replace_known_values(session_scope_key, _normalize_input(text), exempt)
-                for text in extract_strings(payload) if text))
+            candidates = dict.fromkeys(
+                self._expand_known_shorthand(
+                    session_scope_key, self._replace_known_values(session_scope_key, _normalize_input(text), exempt)
+                )
+                for text in extract_strings(payload) if text)
+            # The second pass only sees input the regex pass has covered.
+            # A candidate needing new vault tokens waits for the ordered walk.
+            texts = [text for text in candidates if not self._regex_findings(session_scope_key, text, exempt)]
             if texts:
                 try:
                     with time_detector(f"second_pass_{type(self._second_pass).__name__}"):
                         findings = detect_many(texts)
-                    if findings is not None:
-                        predicted = dict(zip(texts, findings, strict=True))
+                    predicted = dict(zip(texts, findings, strict=True))
                 except Exception:
                     # The speculative batch may include inputs that would
                     # never reach the detector. Verify each actual input.

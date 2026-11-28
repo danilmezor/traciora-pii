@@ -435,6 +435,36 @@ def test_structured_regex_only_still_matches_an_ordered_walk(vault, scope):
     assert virtualizer.rehydrate_structured(scope, masked) == source
 
 
+def test_second_pass_batch_and_scalar_only_read_regex_prepared_inputs(vault, scope):
+    from traciora_pii.config import PIIConfig
+    from traciora_pii.runtime import SharedSecondPass
+
+    class Detector:
+        def __init__(self):
+            self.batches, self.scalar = [], []
+
+        def detect_many(self, texts):
+            self.batches.append(texts)
+            return [[] for _ in texts]
+
+        def detect(self, text):
+            self.scalar.append(text)
+            return []
+
+    detector = Detector()
+    config = PIIConfig().with_overrides({"detector": {"regex_policies": ["en"]}})
+    pii = PIIVirtualizer(vault, config=config, second_pass_detector=SharedSecondPass(detector),
+                         exempt_values=lambda: {"Station House"})
+    email, phone = "proof@example.org", "+1 (202) 555-0123"
+    payload = {"outer": [{"label": "Station House", "address": f"Write to {email}"}, f"Call {phone}"]}
+    safe = pii.anonymize_structured(scope, payload)
+    assert detector.batches == [["Station House"]]
+    assert len(detector.scalar) == 2 and all(REF_TOKEN_PATTERN.search(text) for text in detector.scalar)
+    for observed in [*detector.batches[0], *detector.scalar]:
+        assert email not in observed and phone not in observed
+    assert pii.rehydrate_structured(scope, safe) == payload
+
+
 @pytest.mark.parametrize("phone", ["030 55501234", "+7 495 555-01-23", "+1 (202) 555-0123"])
 @pytest.mark.parametrize("where", ["before", "after", "between"])
 def test_phone_next_to_uuid_round_trips(vault, scope, phone, where):
