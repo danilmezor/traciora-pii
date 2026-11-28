@@ -8,11 +8,12 @@ import logging
 import re
 import unicodedata
 import weakref
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ._latency import time_detector
-from .pii import _UUID, _without_refs, PIIFinding, detect_pii
+from .pii import _uuid_spans, _without_refs, PIIFinding, detect_pii
 from .pii_vault import (
     _SEPARATORS_RE,
     BARE_ID_PATTERN,
@@ -37,11 +38,30 @@ logger = logging.getLogger(__name__)
 _ZERO_WIDTH_RE = re.compile("[\u200b‌‍⁠﻿]")
 
 
-# The model sometimes copies just the ID. The full-token grammar remains
-# authoritative for outbound masking. Only restoration accepts shorthand.
+# The model sometimes copies just the ID. Outbound masking treats a bare
+# match as a reference only if the current vault session holds that ID.
 _RESTORABLE = re.compile(
     rf"{REF_TOKEN_PATTERN.pattern}|(?<!\w)(?<!_ref:){BARE_ID_PATTERN.pattern}(?!\w)"
 )
+
+
+def _protected_refs(
+    text: str, read_known: Callable[[], KnownValues],
+) -> Iterator[tuple[re.Match[str], str | None]]:
+    """Find existing refs, with the full spelling of a uniquely held shorthand."""
+    shorthand: dict[str, str | None] | None = None
+    for match in _RESTORABLE.finditer(text):
+        token = match.group()
+        if ":" in token:
+            yield match, None
+            continue
+        if shorthand is None:
+            shorthand = {}
+            for value in read_known().values:
+                short = value.ref_token.split(":", 1)[1]
+                shorthand[short] = None if short in shorthand else value.ref_token
+        if token in shorthand:
+            yield match, shorthand[token]
 
 
 def _normalize_input(text: str) -> str:
@@ -117,7 +137,10 @@ class PIIVirtualizer:
         except KeyError:
             matcher = _KnownValueMatcher.build(known.values, self._excluded_categories)
             self._known_matchers[known] = matcher
-        return matcher.replace(text, _exempt_spans(text, exempt)) if matcher is not None else text
+        if matcher is None:
+            return text
+        token_spans = [match.span() for match, _ in _protected_refs(text, lambda: known)]
+        return matcher.replace(text, _exempt_spans(text, exempt), token_spans)
 
     def anonymize_text(self, session_scope_key: str, text: str) -> str:
         """Replace raw PII spans in *text* with deterministic ref tokens.
@@ -142,16 +165,11 @@ class PIIVirtualizer:
         text = self._replace_known_values(session_scope_key, text, exempt)
         # If clipping puts another ref beside a shorthand, its original word
         # boundary disappears. Give it its full spelling while it still has one.
-        refs = list(_RESTORABLE.finditer(text))
-        if any(":" not in match.group() for match in refs):
-            full: dict[str, list[str]] = {}
-            for value in self._vault.known_values(session_scope_key).values:
-                full.setdefault(value.ref_token.split(":", 1)[1], []).append(value.ref_token)
-            for match in reversed(refs):
-                candidates = full.get(match.group(), [])
-                if len(candidates) == 1:
-                    text = text[:match.start()] + candidates[0] + text[match.end():]
-        ref_spans = [m.span() for m in _RESTORABLE.finditer(text)]
+        read_known = partial(self._vault.known_values, session_scope_key)
+        for match, full in reversed(list(_protected_refs(text, read_known))):
+            if full is not None:
+                text = text[:match.start()] + full + text[match.end():]
+        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
         exempt_spans = _exempt_spans(text, exempt)
         findings = detect_pii(text, excluded_categories=self._excluded_categories, config=self._config)
         # Mask both sides of an existing token if a detector found one larger
@@ -195,10 +213,11 @@ class PIIVirtualizer:
         # overlap a ref token (e.g. tagging the hex suffix of
         # ``phone_ref:ph_ad3a2c1a`` as a different class). Any such
         # overlap would corrupt the vault — skip defensively.
-        ref_spans = [m.span() for m in _RESTORABLE.finditer(text)]
+        read_known = partial(self._vault.known_values, session_scope_key)
+        ref_spans = [match.span() for match, _ in _protected_refs(text, read_known)]
         exempt_spans = _exempt_spans(text, exempt)
 
-        identifiers = [m.span() for m in _UUID.finditer(_without_refs(text))]
+        identifiers = _uuid_spans(_without_refs(text))
         from ._masking_policy import category_is_excluded
         spans = []
         for finding in opf_findings:
@@ -368,7 +387,7 @@ def build_second_pass_detector(
 def _exempt_pattern(values: Callable[[], Iterable[str]] | None) -> re.Pattern | None:
     if values is None:
         return None
-    names = sorted(filter(None, set(values())), key=len, reverse=True)
+    names = sorted(filter(None, {_normalize_input(value) for value in values()}), key=len, reverse=True)
     if not names:
         return None
     union = "|".join(map(re.escape, names))
@@ -523,8 +542,7 @@ class _KnownValueMatcher:
         pattern = _compile_uncached(f"{_KNOWN_LEFT}(?:{union}){_KNOWN_RIGHT}", 0)
         return cls(pattern, folded, exact)
 
-    def replace(self, text: str, exempt: list[tuple[int, int]]) -> str:
-        token_spans = [m.span() for m in _RESTORABLE.finditer(text)]
+    def replace(self, text: str, exempt: list[tuple[int, int]], token_spans: list[tuple[int, int]]) -> str:
         token_starts = [start for start, _ in token_spans]
         parts: list[str] = []
         pos = 0

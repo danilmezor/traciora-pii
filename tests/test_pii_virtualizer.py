@@ -306,11 +306,50 @@ def test_a_bare_reference_without_a_unique_owner_is_not_expanded(vault, scope):
         vault.get_or_create_token(scope, "[PERSON_NAME]", "Dana Vole")
         vault.get_or_create_token(scope, "[PERSONAL_ID]", "Test identity")
     virtualizer = PIIVirtualizer(vault, excluded_categories=[])
-    for bare in ("pe_123abcde", "pe_765abcde"):
-        source = f"https://example.org/a?q={bare}&case=123"
-        masked = virtualizer.anonymize_text(scope, source)
-        assert "example.org" not in masked
-        assert virtualizer.rehydrate_text(scope, masked) == source
+    source = "https://example.org/a?q=pe_123abcde&case=123"
+    masked = virtualizer.anonymize_text(scope, source)
+    assert "pe_123abcde" in masked
+    assert "example.org" not in masked
+    assert virtualizer.rehydrate_text(scope, masked) == source
+
+
+@pytest.mark.parametrize(("source", "category"), [
+    ("jd_19870512@example.test", "email_ref"),
+    ("https://example.test/id/ab_1234abcd", "url_ref"),
+])
+def test_an_unknown_bare_shape_does_not_split_a_regex_value(vault, scope, source, category):
+    virtualizer = PIIVirtualizer(vault, excluded_categories=[])
+    masked = virtualizer.anonymize_text(scope, source)
+    assert masked.startswith(category + ":")
+    assert REF_TOKEN_PATTERN.fullmatch(masked)
+    assert virtualizer.rehydrate_text(scope, masked) == source
+
+
+def test_the_known_value_matcher_can_mask_an_unknown_bare_shape(vault, scope):
+    source = "jd_19870512"
+    token = vault.get_or_create_token(scope, "[PERSONAL_ID]", source)
+    assert PIIVirtualizer(vault).anonymize_text(scope, source) == token
+
+
+def test_second_pass_does_not_exempt_an_unknown_bare_shape(vault, scope):
+    from traciora_pii._detector_common import LLMFinding
+
+    class Detector:
+        def detect(self, text):
+            return [LLMFinding("synthetic", 0, len(text), "[PERSONAL_ID]", None)]
+
+    source = "jd_19870512"
+    pii = PIIVirtualizer(vault, second_pass_detector=Detector())
+    masked = pii.anonymize_text(scope, source)
+    assert masked.startswith("personal_id_ref:")
+    assert pii.rehydrate_text(scope, masked) == source
+
+
+def test_the_exemption_and_input_have_the_same_normalization(vault, scope):
+    name = "Аптека №5"
+    vault.get_or_create_token(scope, "[PERSON_NAME]", "Аптека No5")
+    pii = PIIVirtualizer(vault, exempt_values=lambda: {name})
+    assert pii.anonymize_text(scope, name) == "Аптека No5"
 
 
 def test_exempt_values_are_current_and_match_exact_whole_words(vault, scope):

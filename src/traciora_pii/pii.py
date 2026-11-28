@@ -41,11 +41,35 @@ class PIIFinding:
     placeholder: str
 
 
-# The fixed groups identify the UUID even when a neighboring phone starts or ends in a hex digit.
-_UUID = re.compile(
-    r"(?<![a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?![a-f])",
+# The fixed groups identify the UUID even when a neighboring phone starts or ends in a digit.
+_UUID_BODY = r"(?<![a-f])[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+_UUID = re.compile(rf"{_UUID_BODY}(?![a-f])", re.IGNORECASE | re.ASCII)
+_UUID_BEFORE_IBAN = re.compile(
+    rf"(?P<uuid>{_UUID_BODY})(?P<iban>[a-f][a-z]\d{{2}}[a-z0-9]{{10,30}})(?!\w)",
     re.IGNORECASE | re.ASCII,
 )
+_GROUPED_CARD_START = re.compile(r"[^\W\d]\d{4}[ -]")
+_GROUPED_CARD_END = re.compile(r"\d{4}[ -]\d{4}[^\W\d]")
+
+
+def _blank_spans(text: str, spans: Iterable[tuple[int, int]]) -> str:
+    for start, end in reversed(list(spans)):
+        text = text[:start] + "#" * (end - start) + text[end:]
+    return text
+
+
+def _uuid_spans(text: str) -> list[tuple[int, int]]:
+    if "-" not in text:
+        return []
+    spans = [match.span() for match in _UUID.finditer(text)]
+    # A neighboring valid IBAN can start with a hex letter. Keep that boundary
+    # without treating a longer hex identifier as a UUID.
+    for match in _UUID_BEFORE_IBAN.finditer(_blank_spans(text, spans)):
+        iban = match["iban"].upper()
+        digits = "".join(ch if ch.isdigit() else str(ord(ch) - ord("A") + 10) for ch in iban[4:] + iban[:4])
+        if int(digits) % 97 == 1:
+            spans.append(match.span("uuid"))
+    return sorted(spans)
 
 def _without_refs(text: str) -> str:
     """Keep offsets and boundaries when a neighboring value has already become a vault token."""
@@ -150,12 +174,16 @@ def detect_pii(
         # A numeric matcher can consume the end of an ID and a real neighboring
         # value in one match. Whole emails and URLs may legitimately contain IDs.
         refs_blanked = _without_refs(scan)
-        identifiers = [match.span() for match in _UUID.finditer(refs_blanked)] if "-" in scan else []
-        uuid_scan, phone_scan = scan, refs_blanked
-        for start, end in reversed(identifiers):
-            blank = "x" * (end - start)
-            uuid_scan = uuid_scan[:start] + blank + uuid_scan[end:]
-            phone_scan = phone_scan[:start] + blank + phone_scan[end:]
+        identifiers = _uuid_spans(refs_blanked)
+        # Keep word boundaries on both sides without supplying a phone or card separator.
+        uuid_scan = _blank_spans(scan, identifiers)
+        phone_scan = _blank_spans(refs_blanked, identifiers)
+        # A grouped card can start after a one-character join between it and
+        # a UUID. Keep that character literal and validate the card as usual.
+        card_joins = [(end, end + 1) for _, end in identifiers if _GROUPED_CARD_START.match(scan, end)]
+        card_joins.extend((start - 1, start) for start, _ in identifiers
+                          if _GROUPED_CARD_END.fullmatch(scan, max(0, start - 10), start))
+        card_scan = _blank_spans(uuid_scan, card_joins)
         findings: list[PIIFinding] = []
         active = (list(detectors) if detectors is not None else
                   configured_detectors(config) if config is not None else _get_default_detectors())
@@ -163,7 +191,14 @@ def detect_pii(
             if category_is_excluded(detector.placeholder, excluded):
                 continue
             embeds_ids = detector.placeholder in ("[EMAIL]", "[URL]")
-            source = scan if embeds_ids else phone_scan if detector.placeholder == "[PHONE]" else uuid_scan
+            if embeds_ids:
+                source = scan
+            elif detector.placeholder == "[PHONE]":
+                source = phone_scan
+            elif detector.placeholder == "[CARD]":
+                source = card_scan
+            else:
+                source = uuid_scan
             for match in detector.pattern.finditer(source):
                 start, end = match.span()
                 if not embeds_ids and any(start < right and left < end for left, right in identifiers):

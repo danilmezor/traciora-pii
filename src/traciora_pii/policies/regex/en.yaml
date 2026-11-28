@@ -120,6 +120,11 @@ patterns:
     # digits is an INN, a tracking number or the tail of an id, not a phone.
     pattern: '(?<!\d)(?:\+1[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|(?:1[\s.-]?)?(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]?\d{4})(?!\d)'
 
+  - name: parenthesized_local_phone
+    placeholder: '[PHONE]'
+    # A domestic area code in parentheses with a grouped subscriber number.
+    pattern: '(?<!\d)\(0[1-9]\d{1,3}\)[\s.-]?\d{3,4}[\s.-]\d{4}(?!\d)'
+
   - name: iban
     placeholder: '[IBAN]'
     pattern: '\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b'
